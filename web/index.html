@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Iron Man Neural HUD Dashboard</title>
+    <meta name="description" content="J.A.R.V.I.S. Tactical AI Voice Assistant & Iron Man HUD Dashboard running on Localhost">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="hud-overlay"></div>
+    <div class="scanlines"></div>
+
+    <header class="hud-header">
+        <div class="header-left">
+            <div class="reactor-mini">
+                <img src="/UI/powersource.gif" alt="Arc Reactor" class="mini-arc" id="miniArc">
+            </div>
+            <div class="brand">
+                <h1 class="logo-text">J.A.R.V.I.S.</h1>
+                <span class="sub-text">STARK INDUSTRIES // MARK VII NEURAL INTERFACE</span>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <div class="status-badge" id="systemStatusBadge">
+                <span class="status-dot"></span>
+                <span id="statusText">SYSTEM ONLINE</span>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <div class="telemetry-chip">
+                <span class="chip-label">SYSTEM DATE</span>
+                <span class="chip-value" id="hudDate">-- / -- / ----</span>
+            </div>
+            <div class="telemetry-chip">
+                <span class="chip-label">STARK TIME</span>
+                <span class="chip-value highlight" id="hudTime">--:--:--</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="hud-main">
+        <!-- Left Panel: Diagnostics & Telemetry -->
+        <aside class="panel left-panel">
+            <div class="panel-header">
+                <h2>TACTICAL TELEMETRY</h2>
+                <span class="panel-tag">SYS.DIAG</span>
+            </div>
+            
+            <div class="gauge-container">
+                <div class="gauge-item">
+                    <div class="gauge-header">
+                        <span>CPU LOAD</span>
+                        <span id="cpuVal">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="bar-fill" id="cpuBar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="gauge-item">
+                    <div class="gauge-header">
+                        <span>QUANTUM MEMORY</span>
+                        <span id="ramVal">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="bar-fill cyan" id="ramBar" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="gauge-item">
+                    <div class="gauge-header">
+                        <span>ARC REACTOR (BATTERY)</span>
+                        <span id="batteryVal">Detecting...</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="bar-fill gold" id="batteryBar" style="width: 100%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hud-radar-box">
+                <img src="/UI/ringJar.gif" alt="Rotating Ring" class="hud-gif ring-radar">
+                <div class="radar-label">FREQUENCY LOCK: 44.1 kHz</div>
+            </div>
+
+            <!-- Quick Action Grid -->
+            <div class="quick-grid">
+                <button class="action-btn" id="btnJoke" onclick="requestJoke()">
+                    <span class="btn-icon">⚡</span>
+                    <span>TELL JOKE</span>
+                </button>
+                <button class="action-btn" id="btnNews" onclick="requestNews()">
+                    <span class="btn-icon">📰</span>
+                    <span>TECH INTEL</span>
+                </button>
+                <button class="action-btn" id="btnCovid" onclick="requestCovid('Delhi')">
+                    <span class="btn-icon">🛡️</span>
+                    <span>HEALTH STATS</span>
+                </button>
+                <button class="action-btn" id="btnContacts" onclick="requestContacts()">
+                    <span class="btn-icon">📑</span>
+                    <span>CONTACTS</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Center Core: Arc Reactor Visualizer & Hologram -->
+        <section class="center-core">
+            <div class="hologram-stage">
+                <div class="holo-ring">
+                    <img src="/UI/circle.gif" alt="Target Ring" class="circle-hud">
+                </div>
+
+                <div class="arc-core-interactive" id="coreTrigger" onclick="toggleVoiceListening()">
+                    <img src="/UI/powersource.gif" alt="Central Arc Reactor" class="central-reactor" id="mainReactor">
+                    <div class="core-glow"></div>
+                    <div class="pulse-indicator" id="voiceIndicator">CLICK TO ENGAGE SPEECH</div>
+                </div>
+
+                <div class="ironman-avatar-box">
+                    <img src="/UI/ironman1.gif" alt="Iron Man Armor" class="ironman-armor">
+                </div>
+            </div>
+
+            <!-- Voice & Terminal Console -->
+            <div class="terminal-container">
+                <div class="terminal-header">
+                    <span class="term-title">> JARVIS NEURAL CONSOLE</span>
+                    <span class="term-status" id="listenerStatus">VOICE ENGINE READY</span>
+                </div>
+
+                <div class="terminal-log" id="terminalLog">
+                    <div class="log-entry system">[SYSTEM INIT] Mark VII Neural Interface mounted successfully.</div>
+                    <div class="log-entry system">[SYSTEM INTEL] All python libraries verified and operational.</div>
+                    <div class="log-entry jarvis">[JARVIS] Greetings boss. I am online and awaiting your orders.</div>
+                </div>
+
+                <form class="command-bar" id="commandForm" onsubmit="handleCommandSubmit(event)">
+                    <span class="prompt-arrow">></span>
+                    <input type="text" id="commandInput" placeholder="Speak wake word or enter order (e.g. 'tell a joke', 'time', 'wikipedia Python')..." autocomplete="off">
+                    <button type="button" class="mic-toggle-btn" id="micBtn" onclick="toggleVoiceListening()">
+                        <span id="micIcon">🎙️</span>
+                    </button>
+                    <button type="submit" class="send-btn" id="sendBtn">EXECUTE</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Right Panel: Dynamic Intelligence Deck -->
+        <aside class="panel right-panel">
+            <div class="panel-header">
+                <h2>TACTICAL INTEL</h2>
+                <span class="panel-tag">LIVE.FEED</span>
+            </div>
+
+            <!-- Dynamic Card Area -->
+            <div class="intel-viewport" id="intelViewport">
+                <div class="intel-card default-card">
+                    <h3 class="card-title">STARK ARCHIVES</h3>
+                    <p class="card-desc">Select an operational module or use voice commands to access classified system intelligence.</p>
+                    
+                    <div class="data-row">
+                        <span class="label">OS PLATFORM:</span>
+                        <span class="val" id="platformVal">Windows 11</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="label">PROCESSOR:</span>
+                        <span class="val" id="procVal">AMD64 Multi-Core</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="label">LOCAL PORT:</span>
+                        <span class="val cyan">5000 (LOCAL HOST)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- QR Code Generator Module -->
+            <div class="qr-module-box">
+                <div class="qr-header">QR MATRIX SYNTHESIZER</div>
+                <div class="qr-input-row">
+                    <input type="text" id="qrInput" placeholder="Data string or URL...">
+                    <button class="qr-gen-btn" onclick="generateQR()">GENERATE</button>
+                </div>
+                <div class="qr-preview-box" id="qrPreview">
+                    <span class="qr-placeholder">Awaiting matrix input...</span>
+                </div>
+            </div>
+
+            <div class="hud-audio-wave">
+                <img src="/UI/lines1.gif" alt="Audio Waves" class="wave-gif">
+            </div>
+        </aside>
+    </main>
+
+    <footer class="hud-footer">
+        <div class="footer-left">
+            <span>REPOSITORY: BolisettySujith/J.A.R.V.I.S</span>
+            <span class="separator">//</span>
+            <span>STATUS: VERIFIED WORKING</span>
+        </div>
+        <div class="footer-right">
+            <span>PRESS [SPACE] OR CLICK CORE FOR VOICE INPUT</span>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
