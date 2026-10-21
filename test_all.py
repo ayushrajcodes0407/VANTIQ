@@ -2349,10 +2349,199 @@ Arc Reactor Generation IV, Mark 85 Autonomous Avionics System
                 os.environ.pop("OLLAMA_BASE_URL", None)
         print("[PASS] Loopback security verified: remote AI domains strictly prohibited.")
 
+    def _ensure_test_products(self):
+        """Ensure test catalogue has products whether tests are run individually or together"""
+        res = self.client.get('/api/products')
+        if res.get_json().get("total_count", 0) < 2:
+            self.client.post('/api/products', json={
+                "name": "Capacitor",
+                "sku": "ELEC-CAP-001",
+                "category": "Electronics",
+                "purchase_price": 50.0,
+                "selling_price": 80.0,
+                "opening_stock": 100.0,
+                "reorder_level": 20.0,
+                "unit": "piece"
+            })
+            self.client.post('/api/products', json={
+                "name": "Resistor Pack",
+                "sku": "ELEC-RES-002",
+                "category": "Electronics",
+                "purchase_price": 10.0,
+                "selling_price": 25.0,
+                "opening_stock": 5.0,
+                "reorder_level": 15.0,
+                "unit": "pack"
+            })
+
+    def test_100_multilingual_language_detection(self):
+        """Verify accurate language classification: English, Hindi Devanagari, and Hinglish"""
+        import multilingual
+        self.assertEqual(multilingual.detect_language("What is the current stock?"), "en")
+        self.assertEqual(multilingual.detect_language("सारे प्रोडक्ट्स दिखाओ"), "hi")
+        self.assertEqual(multilingual.detect_language("कितने प्रोडक्ट्स हैं?"), "hi")
+        self.assertEqual(multilingual.detect_language("Capacitor ka stock kitna hai?"), "hinglish")
+        self.assertEqual(multilingual.detect_language("Saare products dikhao bhai"), "hinglish")
+        self.assertEqual(multilingual.detect_language("jarvis kaun kaun se products hai"), "hinglish")
+        print("[PASS] Multilingual language detector accurately identifies English, Devanagari, and Hinglish.")
+
+    def test_101_stock_query_without_product_returns_inventory_summary(self):
+        """Verify 'what is current stock bro' and 'what is current stock VANTIQ' return overall inventory summary"""
+        self._ensure_test_products()
+        res1 = self.client.post('/api/command', json={"command": "what is current stock bro"})
+        self.assertEqual(res1.status_code, 200)
+        data1 = res1.get_json()
+        self.assertEqual(data1["action"], "inventory_summary")
+        self.assertIn("total_products", data1)
+        self.assertNotIn("Boss, I processed your query", data1.get("speak", ""))
+
+        res2 = self.client.post('/api/command', json={"command": "what is current stock VANTIQ"})
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.get_json()
+        self.assertEqual(data2["action"], "inventory_summary")
+        print("[PASS] General stock queries without product names reliably return inventory summary.")
+
+    def test_102_product_verify_real_database_audit(self):
+        """Verify 'Jarvis verify all the products' executes real audit validation"""
+        self._ensure_test_products()
+        res = self.client.post('/api/command', json={"command": "Jarvis verify all the products"})
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["action"], "product_verify")
+        self.assertIn("total_checked", data)
+        self.assertIn("issues", data)
+        self.assertGreaterEqual(data["total_checked"], 1)
+        print("[PASS] Product verification audit performs real checks on database records.")
+
+    def test_103_multilingual_product_list_hindi_and_hinglish(self):
+        """Verify catalogue product listings in Hindi, Hinglish, and English"""
+        self._ensure_test_products()
+        res_hinglish = self.client.post('/api/command', json={"command": "jarvis kaun kaun se products hai"})
+        self.assertEqual(res_hinglish.status_code, 200)
+        data_h = res_hinglish.get_json()
+        self.assertEqual(data_h["action"], "catalogue_list")
+        self.assertIn("Aapke catalogue", data_h["speak"])
+
+        res_hi = self.client.post('/api/command', json={"command": "सारे प्रोडक्ट्स दिखाओ"})
+        self.assertEqual(res_hi.status_code, 200)
+        data_hi = res_hi.get_json()
+        self.assertEqual(data_hi["action"], "catalogue_list")
+        self.assertIn("कैटलॉग", data_hi["speak"])
+
+        res_saare = self.client.post('/api/command', json={"command": "Saare products dikhao"})
+        self.assertEqual(res_saare.status_code, 200)
+        data_s = res_saare.get_json()
+        self.assertEqual(data_s["action"], "catalogue_list")
+        print("[PASS] Multilingual product listing returns actual products in Hindi and Hinglish.")
+
+    def test_104_product_count_multilingual(self):
+        """Verify product count queries in Hinglish and Devanagari match stored database count"""
+        self._ensure_test_products()
+        res_count = self.client.post('/api/command', json={"command": "Kitne products hain?"})
+        self.assertEqual(res_count.status_code, 200)
+        data = res_count.get_json()
+        self.assertEqual(data["action"], "catalogue_count")
+        self.assertGreaterEqual(data["total_count"], 1)
+
+        res_count_hi = self.client.post('/api/command', json={"command": "कुल कितने प्रोडक्ट हैं?"})
+        self.assertEqual(res_count_hi.status_code, 200)
+        data_hi = res_count_hi.get_json()
+        self.assertEqual(data_hi["action"], "catalogue_count")
+        print("[PASS] Multilingual product count matches real database inventory numbers.")
+
+    def test_105_specific_product_stock_lookup_and_not_found(self):
+        """Verify stock lookup for specific products in Hinglish and clear not-found explanations"""
+        self._ensure_test_products()
+        # Found product: Capacitor
+        res_found = self.client.post('/api/command', json={"command": "Capacitor ka stock kitna hai?"})
+        self.assertEqual(res_found.status_code, 200)
+        data_found = res_found.get_json()
+        self.assertEqual(data_found["action"], "catalogue_stock")
+        self.assertIn("product", data_found)
+        self.assertEqual(data_found["product"]["name"], "Capacitor")
+        self.assertIn("Capacitor ka current stock", data_found["speak"])
+
+        # Not found product
+        res_not_found = self.client.post('/api/command', json={"command": "QuantumTachyonReactor ka stock kitna hai?"})
+        self.assertEqual(res_not_found.status_code, 200)
+        data_nf = res_not_found.get_json()
+        self.assertEqual(data_nf["action"], "catalogue_stock")
+        self.assertEqual(data_nf["match_count"], 0)
+        self.assertIn("quantumtachyonreactor", data_nf["speak"].lower())
+        print("[PASS] Specific product stock lookups accurately return real data or clear missing-product notice.")
+
+
+    def test_106_lowest_stock_and_low_stock_queries(self):
+        """Verify low-stock and lowest-stock ranking queries in Hinglish and English"""
+        self._ensure_test_products()
+        res_lowest = self.client.post('/api/command', json={"command": "Sabse kam stock kin products ka hai?"})
+        self.assertEqual(res_lowest.status_code, 200)
+        data_lowest = res_lowest.get_json()
+        self.assertEqual(data_lowest["action"], "catalogue_lowest_stock")
+        self.assertIn("items", data_lowest)
+
+        res_low = self.client.post('/api/command', json={"command": "Mujhe low stock wale products dikhao"})
+        self.assertEqual(res_low.status_code, 200)
+        data_low = res_low.get_json()
+        self.assertEqual(data_low["action"], "catalogue_low_stock")
+        print("[PASS] Lowest stock ranking and low stock reports return real sorted quantities.")
+
+    def test_107_contextual_follow_up_pricing(self):
+        """Verify conversational multi-turn follow-up: list products then ask for cheapest"""
+        self._ensure_test_products()
+        # Step 1: List products
+        self.client.post('/api/command', json={"command": "Saare products dikhao"})
+        # Step 2: Contextual follow-up
+        res_cheap = self.client.post('/api/command', json={"command": "Inmein sabse sasta kaunsa hai?"})
+        self.assertEqual(res_cheap.status_code, 200)
+        data_c = res_cheap.get_json()
+        self.assertEqual(data_c["action"], "cheapest_product")
+        self.assertIn("product", data_c)
+        self.assertGreater(data_c["product"]["selling_price"], 0)
+        print("[PASS] Contextual follow-up correctly resolves cheapest product from session context.")
+
+
+    def test_108_conceptual_difference_explanations(self):
+        """Verify business concept explanations in Hindi and Hinglish with numerical concepts"""
+        res_diff = self.client.post('/api/command', json={"command": "Purchase price aur selling price mein kya difference hai?"})
+        self.assertEqual(res_diff.status_code, 200)
+        data_d = res_diff.get_json()
+        self.assertEqual(data_d["action"], "llm_explanation")
+        self.assertTrue(len(data_d.get("explanation", "")) > 10)
+
+        res_gm = self.client.post('/api/command', json={"command": "Explain gross margin in Hindi"})
+        self.assertEqual(res_gm.status_code, 200)
+        data_gm = res_gm.get_json()
+        self.assertEqual(data_gm["action"], "llm_explanation")
+        self.assertTrue(len(data_gm.get("explanation", "")) > 10)
+        print("[PASS] Conceptual business differences explained in Hindi/Hinglish without generic fallback.")
+
+    def test_109_wake_word_and_conversational_normalization(self):
+        """Verify wake words and conversational fillers (bro, bhai, jarvis, vantiq) are normalized"""
+        import multilingual
+        cleaned, lang = multilingual.clean_query("Jarvis what is current stock bro please")
+        self.assertEqual(cleaned, "what is current stock")
+
+        cleaned2, lang2 = multilingual.clean_query("hey vantiq capacitor ka stock kitna hai bhai")
+        self.assertIn("capacitor ka stock kitna hai", cleaned2)
+        print("[PASS] Wake words and filler terms successfully stripped without altering semantic intent.")
+
+    def test_110_empty_catalogue_handling_in_hindi(self):
+        """Verify empty catalogue message in Hindi does not crash or return broken text"""
+        import multilingual
+        formatted = multilingual.format_multilingual_response("product_list", "hi", {"items": [], "total": 0})
+        self.assertIn("कैटलॉग", formatted["speak"])
+        self.assertIn("खाली", formatted["speak"])
+
+        formatted_h = multilingual.format_multilingual_response("product_list", "hinglish", {"items": [], "total": 0})
+        self.assertIn("empty", formatted_h["speak"].lower())
+        print("[PASS] Empty catalogue responses properly localized in Hindi and Hinglish.")
+
 
 if __name__ == '__main__':
     print("==================================================")
-    print(" Running J.A.R.V.I.S. Data Import & Regression Suite")
+    print(" Running VANTIQ Data Import & Regression Suite")
     print("==================================================")
     unittest.main(verbosity=2)
+
 

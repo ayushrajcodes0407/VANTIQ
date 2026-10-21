@@ -36,11 +36,15 @@ CANONICAL_INTENTS = {
     "product_count",
     "product_search",
     "product_stock",
+    "product_verify",
     "products_without_price",
     "inventory_summary",
     "low_stock_products",
     "out_of_stock_products",
+    "lowest_stock_products",
     "product_price",
+    "cheapest_product",
+    "expensive_product",
     "dataset_summary",
     "dataset_dimensions",
     "dataset_missing_values",
@@ -234,15 +238,19 @@ def interpret_natural_language(
         "You are VANTIQ Natural Language Intent Router. "
         "Your task is to interpret the user's business query into a strictly validated JSON structure.\n"
         "Allowed canonical intents:\n"
-        "- product_list: list all catalogue products\n"
-        "- product_count: count total products or inventory units\n"
+        "- product_list: list all catalogue products (e.g., 'show all products', 'saare products dikhao', 'kaun kaun se products hai')\n"
+        "- product_count: count total products or inventory units (e.g., 'how many products', 'kitne products hai')\n"
+        "- product_verify: audit and verify catalogue products (e.g., 'verify all the products', 'products check karo')\n"
         "- product_search: find or search product by name or SKU\n"
-        "- product_stock: check stock balance or quantity of a specific product\n"
+        "- product_stock: check stock balance of a specific product (e.g., 'stock of Capacitor', 'Capacitor ka stock kitna hai')\n"
+        "- inventory_summary: general inventory and stock summary when no product name is given (e.g., 'what is current stock bro', 'current stock batao', 'stock status')\n"
+        "- low_stock_products: products below reorder level or low in stock (e.g., 'low stock products', 'kam stock wale products')\n"
+        "- out_of_stock_products: products with zero stock (e.g., 'out of stock products', 'kaun se products ka stock khatam ho gaya')\n"
+        "- lowest_stock_products: products ordered by least stock (e.g., 'sabse kam stock kin products ka hai')\n"
         "- products_without_price: products with no selling price configured\n"
         "- product_price: get selling price or purchase cost of a specific product\n"
-        "- inventory_summary: general inventory and stock status\n"
-        "- low_stock_products: products below reorder level or low in stock\n"
-        "- out_of_stock_products: products with zero stock\n"
+        "- cheapest_product: find the cheapest product from previous list (e.g., 'inmein sabse sasta kaunsa hai', 'which is cheapest')\n"
+        "- expensive_product: find most expensive product from previous list\n"
         "- dataset_summary: overview/summary of active dataset\n"
         "- dataset_dimensions: row and column counts\n"
         "- dataset_missing_values: missing or null cells in each column\n"
@@ -257,12 +265,13 @@ def interpret_natural_language(
         "- bi_pricing: gross margins or profitability analysis\n"
         "- bi_inventory: dataset inventory or stock status\n"
         "- bi_sales: sales trends or revenue\n"
-        "- explanation: user asks to explain a business concept (e.g. gross margin, reorder level) or asks in another language (e.g. Hindi, French, Spanish)\n"
+        "- explanation: user explicitly asks to explain a business/accounting concept or difference between terms (e.g. 'gross margin in Hindi', 'Purchase price aur selling price mein kya difference hai')\n"
         "- unknown: query not recognized\n\n"
         "Rules:\n"
         "1. Never invent fake product names, prices, or statistics. All business facts are calculated by the database.\n"
-        "2. If the user asks to explain a concept (like gross margin, profit, reorder level) or asks in Hindi/another language, set intent to 'explanation', entity to the concept, and direct_response to null.\n"
-        "3. Output MUST be valid JSON only with keys: intent, entity, operation, parameters, direct_response. Keep JSON compact."
+        "2. Understand queries in English, Hindi (Devanagari), and Hinglish (Hindi written in Roman script). "
+        "Do NOT classify inventory/catalogue queries in Hindi/Hinglish as 'explanation'—use the correct canonical intent (e.g. product_list, product_stock, inventory_summary).\n"
+        "3. Output MUST be valid JSON only with keys: intent, entity, operation, parameters, response_language, direct_response. Keep JSON compact."
     )
 
     user_prompt = f"User Query: \"{query}\"\nActive Dataset Context: {active_ds}\nOutput JSON:"
@@ -313,6 +322,7 @@ def interpret_natural_language(
         entity = str(parsed.get("entity", "general"))
         operation = str(parsed.get("operation", "query"))
         parameters = parsed.get("parameters") if isinstance(parsed.get("parameters"), dict) else {}
+        response_language = str(parsed.get("response_language", "en")).lower()
         direct_response = parsed.get("direct_response")
         if direct_response and not isinstance(direct_response, str):
             direct_response = str(direct_response)
@@ -324,6 +334,7 @@ def interpret_natural_language(
             "entity": entity,
             "operation": operation,
             "parameters": parameters,
+            "response_language": response_language,
             "direct_response": direct_response,
             "model": cfg["model"],
             "inference_time_seconds": elapsed,
@@ -343,24 +354,38 @@ def interpret_natural_language(
 
 # Deterministic fallback explanations for core accounting & financial terms
 FALLBACK_ACCOUNTING_KNOWLEDGE = {
+    "purchase price aur selling price": {
+        "Hindi": "लागत मूल्य (Purchase Price) वह दर है जिस पर आप सामान सप्लायर से खरीदते हैं, जबकि विक्रय मूल्य (Selling Price) वह दर है जिस पर आप ग्राहक को बेचते हैं। उदाहरण: यदि आपने कोई वस्तु ₹100 में खरीदी और ₹140 में बेची, तो खरीद मूल्य ₹100 और विक्रय मूल्य ₹140 है, जिससे ₹40 का सकल लाभ हुआ।",
+        "Hinglish": "Purchase price (cost price) wo rate hai jispar aap item khareedte hain, aur selling price wo rate hai jispar aap customer ko bechte hain. Example: Agar aapne ek item ₹100 mein khareeda aur ₹140 mein becha, to purchase cost ₹100 hai, selling price ₹140 hai, aur ₹40 aapka profit hai.",
+        "English": "Purchase price is the cost incurred to acquire goods from a supplier, whereas selling price is the price charged to customers. Example: Buying an item for ₹100 and selling it for ₹140 yields ₹40 gross profit."
+    },
+    "gross margin aur markup": {
+        "Hindi": "सकल मार्जिन (Gross Margin) विक्रय मूल्य पर लाभ का प्रतिशत है [(विक्रय - लागत)/विक्रय × 100], जबकि मार्कअप (Markup) लागत मूल्य पर जोड़ा गया लाभ का प्रतिशत है [(विक्रय - लागत)/लागत × 100]। उदाहरण: ₹100 की लागत और ₹150 के विक्रय मूल्य पर, मार्कअप 50% है जबकि ग्रॉस मार्जिन 33.3% है।",
+        "Hinglish": "Gross margin selling price par profit percentage hota hai [(Selling - Cost)/Selling × 100], jabki markup purchase cost par add kiya gaya profit percentage hota hai [(Selling - Cost)/Cost × 100]. Example: Agar cost ₹100 aur selling price ₹150 hai, to markup 50% aur gross margin 33.3% hai.",
+        "English": "Gross margin is profit divided by selling price [(Price - Cost)/Price × 100], while markup is profit divided by cost [(Price - Cost)/Cost × 100]. Example: If cost is ₹100 and price is ₹150, markup is 50% while gross margin is 33.3%."
+    },
     "gross margin": {
         "Hindi": "सकल मार्जिन (Gross Margin) वह प्रतिशत है जो कुल राजस्व में से बेची गई वस्तुओं की लागत (COGS) घटाने के बाद बचता है, जो लाभप्रदता दर्शाता है।",
+        "Hinglish": "Gross margin revenue ka wo percentage hai jo direct costs (COGS) minus karne ke baad bachta hai, jo business profitability measure karta hai.",
         "English": "Gross margin is the percentage of revenue remaining after subtracting the cost of goods sold (COGS), measuring production efficiency.",
         "French": "La marge brute représente le pourcentage de revenus restant après déduction du coût des marchandises vendues.",
         "Spanish": "El margen bruto representa el porcentaje de ingresos que queda tras deducir el coste de los bienes vendidos."
     },
     "reorder level": {
         "Hindi": "पुनः आदेश स्तर (Reorder Level) न्यूनतम स्टॉक सीमा है जिस पर पहुंचते ही नया माल मंगवाने का आदेश दिया जाता है ताकि स्टॉक खत्म न हो।",
+        "Hinglish": "Reorder level wo minimum stock balance hai jispar naya purchase order place kiya jata hai taaki stock khatam na ho.",
         "English": "Reorder level is the minimum inventory balance that triggers a new purchase order to replenish stock before depletion.",
         "French": "Le point de commande est le niveau de stock minimum qui déclenche un réapprovisionnement.",
         "Spanish": "El punto de pedido es el nivel mínimo de existencias que activa una orden de reposición."
     },
     "markup": {
         "Hindi": "मार्कअप (Markup) लागत मूल्य पर जोड़ा गया वह प्रतिशत या राशि है जिससे वस्तु का विक्रय मूल्य तय होता है।",
+        "Hinglish": "Markup purchase cost par add kiya gaya extra percentage hota hai jisse product ka final selling price decide hota hai.",
         "English": "Markup is the percentage or amount added to the cost price of goods to determine the final selling price."
     },
     "inventory turnover": {
         "Hindi": "इन्वेंटरी टर्नओवर (Inventory Turnover) यह मापता है कि एक निश्चित अवधि में स्टॉक कितनी बार बेचा और बदला गया है।",
+        "Hinglish": "Inventory turnover measure karta hai ki given period mein stock kitni baar sell hokar replace hua hai.",
         "English": "Inventory turnover measures how frequently stock is sold and replaced over a given period."
     }
 }
@@ -368,10 +393,26 @@ FALLBACK_ACCOUNTING_KNOWLEDGE = {
 
 def _lookup_fallback_explanation(concept: str, language: str) -> Optional[str]:
     c_clean = concept.lower().strip()
-    lang_key = "Hindi" if "hindi" in language.lower() else ("French" if "french" in language.lower() else ("Spanish" if "spanish" in language.lower() else "English"))
+    l_lower = (language or "en").lower()
+
+    if "hinglish" in l_lower:
+        lang_key = "Hinglish"
+    elif "hindi" in l_lower or any('\u0900' <= char <= '\u097F' for char in concept):
+        lang_key = "Hindi"
+    elif "french" in l_lower:
+        lang_key = "French"
+    elif "spanish" in l_lower:
+        lang_key = "Spanish"
+    else:
+        lang_key = "English"
+
+    # Multi-word matching
     for term, defs in FALLBACK_ACCOUNTING_KNOWLEDGE.items():
-        if term in c_clean or c_clean in term:
-            return defs.get(lang_key, defs.get("English"))
+        if term in c_clean or c_clean in term or all(w in c_clean for w in term.split()):
+            res = defs.get(lang_key)
+            if not res and lang_key == "Hinglish":
+                res = defs.get("Hindi")
+            return res or defs.get("English")
     return None
 
 

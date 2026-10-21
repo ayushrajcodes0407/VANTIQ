@@ -111,20 +111,48 @@ function logTerminal(message, type = 'system') {
     logBox.scrollTop = logBox.scrollHeight;
 }
 
+let isAssistantSpeaking = false;
+let currentSpeechLang = localStorage.getItem('vantiq_speech_lang') || 'en-IN';
+
 // Speak out response using Web SpeechSynthesis
 function vantiqSpeak(text) {
     if (!synth) return;
     synth.cancel(); // cancel any active speech
+    isAssistantSpeaking = true;
+
+    // Prevent echo: If mic is currently active, abort recognition to avoid hearing itself
+    if (recognition && isListening) {
+        try { recognition.abort(); } catch (e) {}
+    }
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.05;
     utterance.pitch = 0.95;
 
-    // Pick professional voice if available
+    // Detect if response contains Hindi Devanagari script
+    const hasDevanagari = /[\u0900-\u097F]/.test(text);
+
+    // Pick professional voice matching the language
     const voices = synth.getVoices();
-    const vantiqVoice = voices.find(v => v.name.includes('David') || v.name.includes('George') || v.name.includes('Male') || v.lang.startsWith('en'));
-    if (vantiqVoice) {
-        utterance.voice = vantiqVoice;
+    let chosenVoice = null;
+    if (hasDevanagari) {
+        chosenVoice = voices.find(v => v.lang.startsWith('hi'));
+        utterance.lang = 'hi-IN';
     }
+    if (!chosenVoice) {
+        chosenVoice = voices.find(v => v.lang.includes('IN') || v.name.includes('India')) ||
+                      voices.find(v => v.name.includes('David') || v.name.includes('George') || v.name.includes('Male') || v.lang.startsWith('en'));
+    }
+    if (chosenVoice) {
+        utterance.voice = chosenVoice;
+    }
+
+    utterance.onend = () => {
+        setTimeout(() => { isAssistantSpeaking = false; }, 400);
+    };
+    utterance.onerror = () => {
+        isAssistantSpeaking = false;
+    };
 
     synth.speak(utterance);
 }
@@ -141,16 +169,21 @@ function initVoiceRecognition() {
     recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = currentSpeechLang;
 
     recognition.onstart = () => {
         isListening = true;
         document.getElementById('micBtn').classList.add('listening');
-        document.getElementById('listenerStatus').textContent = 'LISTENING FOR AUDIO INPUT...';
+        document.getElementById('listenerStatus').textContent = `LISTENING (${currentSpeechLang})...`;
         document.getElementById('voiceIndicator').textContent = 'AUDIO SENSORS ACTIVE...';
     };
 
     recognition.onresult = (event) => {
+        // Echo prevention: Ignore self-produced audio
+        if (isAssistantSpeaking) {
+            console.log('Ignored speech event while assistant was speaking.');
+            return;
+        }
         const transcript = event.results[0][0].transcript;
         logTerminal(transcript, 'user');
         executeCommand(transcript);
@@ -164,6 +197,15 @@ function initVoiceRecognition() {
     recognition.onend = () => {
         stopListeningState();
     };
+}
+
+function setSpeechLanguage(lang) {
+    currentSpeechLang = lang || 'en-IN';
+    localStorage.setItem('vantiq_speech_lang', currentSpeechLang);
+    if (recognition) {
+        recognition.lang = currentSpeechLang;
+    }
+    logTerminal(`Speech recognition language set to ${currentSpeechLang}`, 'system');
 }
 
 function stopListeningState() {
@@ -300,7 +342,7 @@ async function executeCommand(cmd) {
                 </div>
                 ${followUps}
             `);
-        } else if (data.action === 'catalogue_stock' || data.action === 'catalogue_price' || data.action === 'catalogue_selling_price' || data.action === 'catalogue_find' || data.action === 'catalogue_count') {
+        } else if (data.action === 'catalogue_stock' || data.action === 'catalogue_price' || data.action === 'catalogue_selling_price' || data.action === 'catalogue_find' || data.action === 'catalogue_count' || data.action === 'cheapest_product' || data.action === 'expensive_product') {
             let followUps = renderFollowUpsHtml(data.follow_ups);
             displayIntelCard('CATALOGUE INTELLIGENCE', `
                 <div class="source-badge">SOURCE: ${data.source || 'Product Catalogue'}</div>
@@ -311,6 +353,33 @@ async function executeCommand(cmd) {
                 </div>
                 ${followUps}
             `);
+        } else if (data.action === 'product_verify') {
+            let tableHtml = renderTableHtml(data.table);
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            displayIntelCard('CATALOGUE INTEGRITY AUDIT', `
+                <div class="source-badge">SOURCE: ${data.source || 'Catalogue Audit'}</div>
+                <h4 style="color: ${data.issues_count ? 'var(--gold)' : 'var(--cyan)'}; margin: 6px 0;">${escapeHtml(data.display)}</h4>
+                <p style="color: #fff; line-height: 1.4; margin-bottom: 8px;">${escapeHtml(data.speak)}</p>
+                ${tableHtml}
+                <div style="margin-top: 10px;">
+                    <button class="launch-bi-btn" onclick="openCatalogueModal()">REVIEW IN CATALOGUE</button>
+                </div>
+                ${followUps}
+            `);
+        } else if (data.action === 'inventory_summary' || data.action === 'catalogue_lowest_stock') {
+            let tableHtml = renderTableHtml(data.table);
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            displayIntelCard('INVENTORY SUMMARY', `
+                <div class="source-badge">SOURCE: ${data.source || 'Inventory Ledger'}</div>
+                <h4 style="color: var(--cyan); margin: 6px 0;">${escapeHtml(data.display)}</h4>
+                <p style="color: #fff; line-height: 1.4; margin-bottom: 8px;">${escapeHtml(data.speak)}</p>
+                ${tableHtml}
+                <div style="margin-top: 10px;">
+                    <button class="launch-bi-btn" onclick="openCatalogueModal()">OPEN INVENTORY</button>
+                </div>
+                ${followUps}
+            `);
+
         } else if (data.action === 'dataset_summary' || data.action === 'dataset_dimensions' || data.action === 'dataset_columns' || data.action === 'dataset_missing_values' || data.action === 'dataset_duplicates' || data.action === 'dataset_head' || data.action === 'dataset_stats' || data.action === 'dataset_filter' || data.action === 'dataset_group' || data.action === 'dataset_dates') {
             let tableHtml = renderTableHtml(data.table);
             let followUps = renderFollowUpsHtml(data.follow_ups);
