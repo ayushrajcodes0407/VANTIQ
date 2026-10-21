@@ -35,3 +35,10 @@ folium==0.12.1
 opencage==1.2.2
 ffmpeg-normalize==1.22.1
 PyAudio==0.2.11
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.1
+pymupdf>=1.24.0
+Flask>=2.3.0
+Werkzeug>=2.3.0
+
