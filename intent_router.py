@@ -139,7 +139,16 @@ def route_intent(raw_command: str, context: Optional[Dict[str, Any]] = None, db_
 
     cat_conn = database.get_connection(db_path) if db_path else None
     try:
-        return _route_intent_internal(cmd, c_lower, context, db_path, cat_conn)
+        resp = _route_intent_internal(cmd, c_lower, context, db_path, cat_conn)
+        cleaned_cmd, detected_lang = multilingual.clean_query(cmd)
+        multilingual.SESSION_CONTEXT.record_turn(
+            query=cmd,
+            response=resp,
+            intent=resp.get("action", "unknown"),
+            category=resp.get("source_type", "assistant"),
+            language=detected_lang
+        )
+        return resp
     finally:
         if cat_conn:
             try:
@@ -161,13 +170,9 @@ def _build_product_list_response(cat_conn: Any, source_label: str = "Product Cat
     multilingual.SESSION_CONTEXT.update_products(items, language=lang)
 
     if total == 0:
-        if lang in ("hi", "hinglish"):
-            loc = multilingual.format_multilingual_response("product_list", lang, {"items": [], "total": 0})
-            speak_text = loc["speak"]
-            display_text = loc["display"]
-        else:
-            speak_text = "Boss, the product catalogue is currently empty. There are zero products recorded. You can add products manually via the Catalogue modal or map an imported spreadsheet."
-            display_text = "Catalogue: 0 active products (Empty)"
+        loc = multilingual.format_multilingual_response("product_list", lang, {"items": [], "total": 0})
+        speak_text = loc["speak"]
+        display_text = loc["display"]
         return {
             "speak": speak_text,
             "display": display_text,
@@ -738,11 +743,11 @@ def _build_stock_response(target: str, cat_conn: Any, source_label: str = "Inven
 
     if not items:
         if lang in ("hi", "hinglish"):
-            loc = multilingual.format_multilingual_response("product_not_found", lang, {"query": target})
+            loc = multilingual.format_multilingual_response("product_not_found", lang, {"name": target, "query": target})
             speak_text = loc["speak"]
             display_text = loc["display"]
         else:
-            speak_text = f"Boss, no product matching '{target}' was found in the catalogue."
+            speak_text = f"Product '{target}' was not found in the catalogue. Would you like to view all active products?"
             display_text = f"Stock: No match for '{target}'"
         return {
             "speak": speak_text,
@@ -1011,7 +1016,105 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
     multi_match = multilingual.match_multilingual_intent(cmd, lang=detected_lang)
     if multi_match:
         m_intent, m_params = multi_match
-        if m_intent == "product_verify":
+        if m_intent == "prompt_injection":
+            loc = multilingual.format_multilingual_response("prompt_injection", detected_lang, {})
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "security_alert",
+                "source": "Security Sentinel",
+                "source_type": "security"
+            }
+        elif m_intent == "identity":
+            loc = multilingual.format_multilingual_response("identity", detected_lang, {})
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "identity",
+                "source": "VANTIQ Core",
+                "source_type": "assistant",
+                "follow_ups": ["Tum kya kar sakte ho?", "Saare products dikhao", "What is gross margin?"]
+            }
+        elif m_intent == "capabilities":
+            loc = multilingual.format_multilingual_response("capabilities", detected_lang, {})
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "capabilities",
+                "source": "VANTIQ Core",
+                "source_type": "assistant",
+                "follow_ups": ["Saare products dikhao", "Current stock batao", "What is gross margin?"]
+            }
+        elif m_intent == "greeting":
+            loc = multilingual.format_multilingual_response("greeting", detected_lang, {})
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "greeting",
+                "source": "VANTIQ Core",
+                "source_type": "assistant",
+                "follow_ups": ["Saare products dikhao", "Tum kya kar sakte ho?"]
+            }
+        elif m_intent == "acknowledgement":
+            loc = multilingual.format_multilingual_response("acknowledgement", detected_lang, {})
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "acknowledgement",
+                "source": "VANTIQ Core",
+                "source_type": "assistant"
+            }
+        elif m_intent == "follow_up_explain_lang":
+            target_lang = m_params.get("target_language", "Hindi")
+            last_resp = multilingual.SESSION_CONTEXT.get_last_response()
+            if last_resp:
+                last_text = last_resp.get("display") or last_resp.get("speak") or ""
+                last_action = last_resp.get("action", "")
+                if target_lang == "Hindi":
+                    if "cheapest" in last_action or "cheapest_product" in last_action:
+                        p = last_resp.get("product", {})
+                        p_name = p.get("name", "Product")
+                        sp = p.get("selling_price", 0.0)
+                        content = f"पिछली जानकारी के अनुसार, कैटलॉग में सबसे सस्ता प्रोडक्ट '{p_name}' है, जिसकी विक्रय कीमत ₹{sp:,.2f} है।"
+                    elif "stock" in last_action:
+                        p = last_resp.get("product", {})
+                        p_name = p.get("name", "Product")
+                        qty = p.get("quantity_on_hand", 0)
+                        unit = p.get("unit", "units")
+                        content = f"पिछली जानकारी के अनुसार, '{p_name}' का स्टॉक {qty} {unit} है।"
+                    elif "margin" in last_action:
+                        content = f"पिछली जानकारी के अनुसार, प्रोडक्ट का ग्रॉस मार्जिन विवरण: {last_text}"
+                    else:
+                        expl = local_llm.generate_explanation(last_text, language="Hindi")
+                        content = expl.get("content") if expl.get("success") else f"पिछला विवरण: {last_text}"
+                elif target_lang == "Hinglish":
+                    content = f"Previous context: {last_text}"
+                else:
+                    content = f"Previous context: {last_text}"
+                return {
+                    "speak": content,
+                    "display": content,
+                    "action": "llm_explanation",
+                    "source": "Context Engine",
+                    "source_type": "context",
+                    "explanation": content,
+                    "language": target_lang
+                }
+            else:
+                if target_lang == "Hindi":
+                    msg = "वर्तमान सत्र में समझाने के लिए कोई पूर्व संदर्भ (previous context) नहीं मिला। आप किस प्रोडक्ट या बिज़नेस कॉन्सेप्ट के बारे में जानना चाहते हैं?"
+                elif target_lang == "Hinglish":
+                    msg = "Session mein explain karne ke liye koi previous context nahi mila. Aap kis product ya concept ke baare mein jaanna chahte hain?"
+                else:
+                    msg = "There is no previous response in our session to explain. What product or concept would you like me to explain?"
+                return {
+                    "speak": msg,
+                    "display": msg,
+                    "action": "assistant_help",
+                    "source": "Context Engine",
+                    "source_type": "context"
+                }
+        elif m_intent == "product_verify":
             return _build_product_verify_response(cat_conn, source_label="Catalogue Audit", lang=detected_lang)
         elif m_intent == "inventory_summary":
             return _build_inventory_summary_response(cat_conn, source_label="Inventory Ledger", lang=detected_lang)
@@ -1879,35 +1982,49 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
         return {"speak": "Loading today's top tech intelligence headlines.", "display": "News Protocol active.", "action": "news", "source": "Tech News Matrix", "source_type": "system"}
 
     # =========================================================================
-    # 5. GENERAL INQUIRIES & HELPFUL GUIDANCE (Replacing Blind Fallback)
+    # 5. GENERAL CONVERSATION & INTELLIGENT GUIDANCE (Replacing Blind Fallback)
     # =========================================================================
 
+    # 5A. Check if local Ollama LLM can generate a dynamic conversational response
+    chat_resp = local_llm.generate_chat_response(cmd, language=detected_lang)
+    if chat_resp.get("success") and chat_resp.get("content"):
+        c_text = chat_resp["content"]
+        return {
+            "speak": c_text,
+            "display": c_text,
+            "action": "general_chat",
+            "source": f"Local AI ({chat_resp.get('model', 'qwen')})",
+            "source_type": "llm",
+            "inference_time_seconds": chat_resp.get("inference_time_seconds"),
+            "follow_ups": ["Saare products dikhao", "What is gross margin?", "Check inventory summary"]
+        }
+
+    # 5B. Safe Deterministic Fallback when Local LLM is Offline / Standby
     if detected_lang == "hi":
         speak_text = (
-            f"मैंने आपका अनुरोध प्राप्त किया: '{cmd}'। आप मुझसे कैटलॉग प्रोडक्ट्स देखने, "
-            f"स्टॉक और कीमतें जांचने, या व्यावसायिक रिपोर्ट्स का विश्लेषण करने के लिए कह सकते हैं।"
+            f"मैंने आपका अनुरोध प्राप्त किया: '{cmd}'। लोकल AI मॉडल अभी ऑफलाइन या स्टैंडबाय मोड में है। "
+            f"आप कैटलॉग प्रोडक्ट्स, कीमतें, स्टॉक बैलेंस या व्यावसायिक रिपोर्ट्स की जानकारी ले सकते हैं।"
         )
-        display_text = f"आदेश: '{cmd}'"
+        display_text = f"आदेश स्टैंडबाय: '{cmd}'"
         follow_ups = ["सारे प्रोडक्ट्स दिखाओ", "इन्वेंटरी सारांश दिखाओ", "स्टॉक कितना है?"]
     elif detected_lang == "hinglish":
         speak_text = (
-            f"Maine aapka request note kiya: '{cmd}'. Aap mujhse catalogue products dekhne, "
-            f"stock aur pricing check karne, ya dataset reports review karne ke baare mein pooch sakte hain."
+            f"Maine aapka request note kiya: '{cmd}'. Local AI abhi offline ya standby mode mein hai. "
+            f"Aap catalogue products, pricing, stock levels ya reports check kar sakte hain."
         )
         display_text = f"Order Standby: '{cmd}'"
-        follow_ups = ["Saare products dikhao", "Current stock bro", "Capacitor ka stock kitna hai?"]
+        follow_ups = ["Saare products dikhao", "Current stock batao", "Capacitor ka stock kitna hai?"]
     else:
         speak_text = (
-            f"I processed your query: '{cmd}'. You can ask me to list catalogue products, "
-            f"check stock and pricing, summarize active datasets, audit data quality, or review business reports."
+            f"I processed your query: '{cmd}'. Local AI model is currently standby or offline. "
+            f"You can check catalogue products, stock, pricing, and business reports."
         )
-        display_text = f"Tactical Order Standby: '{cmd}'"
+        display_text = f"Standby: '{cmd}'"
         follow_ups = [
             "What are all products?",
             "Which products are low in stock?",
             "Summarise this dataset",
-            "What are the missing values in each column?",
-            "Explain the findings"
+            "What is gross margin?"
         ]
 
     return {

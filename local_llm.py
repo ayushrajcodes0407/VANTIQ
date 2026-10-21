@@ -48,6 +48,12 @@ CANONICAL_INTENTS = {
     "supplier_lookup",
     "cheapest_product",
     "expensive_product",
+    "identity",
+    "capabilities",
+    "greeting",
+    "acknowledgement",
+    "follow_up",
+    "general_knowledge",
     "dataset_summary",
     "dataset_dimensions",
     "dataset_missing_values",
@@ -371,11 +377,11 @@ FALLBACK_ACCOUNTING_KNOWLEDGE = {
         "English": "Gross margin is profit divided by selling price [(Price - Cost)/Price × 100], while markup is profit divided by cost [(Price - Cost)/Cost × 100]. Example: If cost is ₹100 and price is ₹150, markup is 50% while gross margin is 33.3%."
     },
     "gross margin": {
-        "Hindi": "सकल मार्जिन (Gross Margin) वह प्रतिशत है जो कुल राजस्व में से बेची गई वस्तुओं की लागत (COGS) घटाने के बाद बचता है, जो लाभप्रदता दर्शाता है।",
-        "Hinglish": "Gross margin revenue ka wo percentage hai jo direct costs (COGS) minus karne ke baad bachta hai, jo business profitability measure karta hai.",
-        "English": "Gross margin is the percentage of revenue remaining after subtracting the cost of goods sold (COGS), measuring production efficiency.",
-        "French": "La marge brute représente le pourcentage de revenus restant après déduction du coût des marchandises vendues.",
-        "Spanish": "El margen bruto representa el porcentaje de ingresos que queda tras deducir el coste de los bienes vendidos."
+        "Hindi": "सकल मार्जिन (Gross Margin) वह प्रतिशत है जो राजस्व में से बेची गई वस्तुओं की लागत (COGS) घटाने के बाद बचता है। उदाहरण: यदि कोई वस्तु ₹100 में खरीदी और ₹150 में बेची गई, तो सकल लाभ ₹50 है और ग्रॉस मार्जिन 33.3% [(150 - 100) / 150 × 100] है।",
+        "Hinglish": "Gross margin revenue ka wo percentage hai jo cost of goods sold (COGS) minus karne ke baad bachta hai. Example: Agar koi item ₹100 mein khareeda aur ₹150 mein becha gaya, to gross profit ₹50 hai aur gross margin 33.3% [(150 - 100) / 150 × 100] hai.",
+        "English": "Gross margin is the percentage of revenue remaining after subtracting the cost of goods sold (COGS). Example: If you buy a product for ₹100 and sell it for ₹150, your gross profit is ₹50 and your gross margin is 33.3% [(150 - 100) / 150 × 100].",
+        "French": "La marge brute représente le pourcentage de revenus restant après déduction du coût des marchandises vendues. Exemple: Achat à 100€ et vente à 150€ donne 33.3% de marge brute.",
+        "Spanish": "El margen bruto representa el porcentaje de ingresos que queda tras deducir el coste de los bienes vendidos. Ejemplo: Coste 100€ y venta 150€ da un margen del 33.3%."
     },
     "reorder level": {
         "Hindi": "पुनः आदेश स्तर (Reorder Level) न्यूनतम स्टॉक सीमा है जिस पर पहुंचते ही नया माल मंगवाने का आदेश दिया जाता है ताकि स्टॉक खत्म न हो।",
@@ -527,3 +533,88 @@ def generate_explanation(
             "model": cfg["model"],
             "source": "error"
         }
+
+
+def generate_chat_response(
+    query: str,
+    language: str = "en",
+    context_history: Optional[List[Dict[str, str]]] = None,
+    timeout: float = 12.0
+) -> Dict[str, Any]:
+    """
+    Generates a conversational response using the local Ollama LLM.
+    Zero cloud calls. Strictly bound to localhost.
+    Returns {success: bool, content: str, source: str, model: str}
+    """
+    cfg = get_ollama_config()
+    health = check_ollama_health(base_url=cfg["base_url"], model=cfg["model"], timeout=2.0)
+    if not health["service_running"] or not health["model_available"]:
+        return {
+            "success": False,
+            "content": "Local conversational AI is currently offline or standby.",
+            "source": "fallback",
+            "model": cfg["model"]
+        }
+
+    lang_guidance = (
+        "Respond in natural Hindi (Devanagari script)." if language == "hi"
+        else ("Respond in natural conversational Hinglish (Hindi words written in English/Latin script)." if language == "hinglish"
+              else "Respond in clear, professional English.")
+    )
+
+    sys_prompt = (
+        f"You are VANTIQ, a professional AI business intelligence assistant. "
+        f"{lang_guidance} "
+        f"Keep responses concise (1-3 sentences), polite, direct, and helpful. "
+        f"Never invent fictional company records, stock figures, or customer records."
+    )
+
+    messages = [{"role": "system", "content": sys_prompt}]
+    if context_history:
+        for turn in context_history[-3:]:
+            if turn.get("user"):
+                messages.append({"role": "user", "content": turn["user"]})
+            if turn.get("assistant"):
+                messages.append({"role": "assistant", "content": turn["assistant"]})
+    messages.append({"role": "user", "content": query})
+
+    try:
+        t0 = time.time()
+        resp = requests.post(
+            f"{cfg['base_url']}/api/chat",
+            json={
+                "model": cfg["model"],
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 150
+                }
+            },
+            timeout=timeout
+        )
+        elapsed = round(time.time() - t0, 2)
+        if resp.status_code == 200:
+            content = resp.json().get("message", {}).get("content", "").strip()
+            return {
+                "success": True,
+                "content": content,
+                "source": "local_llm",
+                "model": cfg["model"],
+                "inference_time_seconds": elapsed
+            }
+        return {
+            "success": False,
+            "content": f"Ollama HTTP {resp.status_code}",
+            "source": "error",
+            "model": cfg["model"]
+        }
+    except Exception as e:
+        logger.warning(f"Error in generate_chat_response: {e}")
+        return {
+            "success": False,
+            "content": str(e),
+            "source": "error",
+            "model": cfg["model"]
+        }
+

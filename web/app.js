@@ -283,6 +283,24 @@ async function executeCommand(cmd) {
                 </div>
                 ${followUps}
             `);
+        } else if (data.action === 'identity' || data.action === 'capabilities') {
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            displayIntelCard('VANTIQ AI ASSISTANT', `
+                <div class="source-badge">SOURCE: ${escapeHtml(data.source || 'VANTIQ Core')}</div>
+                <div class="llm-explanation-box">
+                    ${escapeHtml(data.display || data.speak)}
+                </div>
+                ${followUps}
+            `);
+        } else if (data.action === 'general_chat') {
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            displayIntelCard('VANTIQ CONVERSATIONAL AI', `
+                <div class="source-badge">SOURCE: ${escapeHtml(data.source || 'Local AI')}</div>
+                <div class="llm-explanation-box">
+                    ${escapeHtml(data.display || data.speak)}
+                </div>
+                ${followUps}
+            `);
         } else if (data.action === 'wikipedia') {
             displayIntelCard('WIKIPEDIA ARCHIVE', `<p style="line-height: 1.5;">${data.display}</p>`);
         } else if (data.action === 'covid') {

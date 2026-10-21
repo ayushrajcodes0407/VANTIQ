@@ -98,17 +98,40 @@ def clean_query(text: str) -> Tuple[str, str]:
 class ConversationContextManager:
     """
     Stores session state for multi-turn conversational follow-ups:
-    - Last listed products (for 'which one is the cheapest', 'show first one')
-    - Last mentioned product (for 'what is its price', 'is it in stock')
+    - Bounded history of recent turns (query, response, intent, category, language)
+    - Last listed products (for 'which one is the cheapest', 'which product is cheapest')
+    - Last mentioned product (for 'what is its price', 'is it in stock', 'what is its margin')
+    - Last response payload (for 'explain that in Hindi', 'translate that')
     - Last active dataset
     - Last used language
     """
-    def __init__(self):
+    def __init__(self, max_history: int = 10):
+        self.max_history = max_history
+        self.history: List[Dict[str, Any]] = []
         self.last_products: List[Dict[str, Any]] = []
         self.last_product: Optional[Dict[str, Any]] = None
         self.last_intent: Optional[str] = None
+        self.last_category: Optional[str] = None
+        self.last_query: Optional[str] = None
+        self.last_response: Optional[Dict[str, Any]] = None
         self.last_language: str = "en"
         self.active_dataset_id: Optional[str] = None
+
+    def record_turn(self, query: str, response: Dict[str, Any], intent: str, category: str, language: str = "en"):
+        self.last_query = query
+        self.last_response = response
+        self.last_intent = intent
+        self.last_category = category
+        self.last_language = language
+        self.history.append({
+            "query": query,
+            "response": response,
+            "intent": intent,
+            "category": category,
+            "language": language
+        })
+        if len(self.history) > self.max_history:
+            self.history.pop(0)
 
     def update_products(self, products: List[Dict[str, Any]], language: str = "en"):
         self.last_products = products
@@ -120,10 +143,17 @@ class ConversationContextManager:
         self.last_product = product
         self.last_language = language
 
+    def get_last_response(self) -> Optional[Dict[str, Any]]:
+        return self.last_response
+
     def clear(self):
+        self.history = []
         self.last_products = []
         self.last_product = None
         self.last_intent = None
+        self.last_category = None
+        self.last_query = None
+        self.last_response = None
 
 
 # Global context instance
@@ -140,7 +170,127 @@ def format_multilingual_response(
     """
     currency = data.get("currency", "₹")
 
-    if intent == "product_list":
+    if intent == "identity":
+        if lang == "hi":
+            return {
+                "speak": "मैं VANTIQ हूँ, आपका AI-पावर्ड बिज़नेस इंटेलिजेंस असिस्टेंट। मैं प्रोडक्ट प्राइसिंग, स्टॉक, इन्वेंटरी और बिज़नेस रिपोर्ट्स में मदद कर सकता हूँ। आप मुझसे हिंदी, हिंग्लिश या अंग्रेज़ी में बात कर सकते हैं।",
+                "display": "मैं VANTIQ हूँ, आपका AI बिज़नेस असिस्टेंट। आप मुझसे हिंदी, हिंग्लिश या अंग्रेज़ी में सवाल पूछ सकते हैं।"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Main VANTIQ hoon, aapka AI-powered business intelligence assistant. Main product pricing, stock, inventory aur business reports mein help kar sakta hoon. Aap mujhse Hindi, Hinglish ya English mein baat kar sakte hain.",
+                "display": "Main VANTIQ hoon, aapka AI business assistant. Aap mujhse Hindi, Hinglish ya English mein baat kar sakte hain."
+            }
+        else:
+            return {
+                "speak": "I'm VANTIQ, your AI-powered business intelligence assistant. I can help you understand product pricing, inventory, stock availability, business data, and reports. You can talk to me in English, Hindi, or Hinglish.",
+                "display": "I'm VANTIQ, your AI-powered business intelligence assistant. You can speak with me in English, Hindi, or Hinglish."
+            }
+
+    elif intent == "capabilities":
+        if lang == "hi":
+            return {
+                "speak": "मैं प्रोडक्ट्स की कीमतें और स्टॉक जांचने, बिज़नेस डेटा का विश्लेषण करने, रिपोर्ट्स समझने और इंपोर्टेड दस्तावेज़ों से जानकारी खोजने में मदद कर सकता हूँ। बताइए, आप क्या जानना चाहते हैं?",
+                "display": "क्षमताएं: कैटलॉग एवं स्टॉक, मूल्य निर्धारण, डेटा विश्लेषण, रिपोर्ट्स और दस्तावेज़।"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Main products ki pricing aur stock check karne, business data analyse karne, reports samajhne aur imported documents se information dhoondhne mein madad kar sakta hoon. Chaliye, aap kya jaanna chahte hain?",
+                "display": "Capabilities: Product pricing, stock checks, business analytics, reports aur document search."
+            }
+        else:
+            return {
+                "speak": "I can help you check product pricing and stock, analyze business data, review reports, and find information from imported documents. What would you like to explore?",
+                "display": "Capabilities: Product pricing, inventory tracking, business analytics, and document queries."
+            }
+
+    elif intent == "greeting":
+        if lang == "hi":
+            return {
+                "speak": "नमस्ते! मैं VANTIQ हूँ। मैं आपके प्रोडक्ट कैटलॉग, इन्वेंटरी और बिज़नेस डेटा में कैसे सहायता कर सकता हूँ?",
+                "display": "नमस्ते! VANTIQ सहायता के लिए तैयार है।"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Namaste! Main VANTIQ hoon. Main aapke product catalogue, inventory aur business data mein kaise madad kar sakta hoon?",
+                "display": "Namaste! VANTIQ online aur ready hai."
+            }
+        else:
+            return {
+                "speak": "Hello! I'm VANTIQ, ready to assist you with product catalogue, inventory, pricing, and business intelligence.",
+                "display": "Greetings! VANTIQ Intelligence System online."
+            }
+
+    elif intent == "acknowledgement":
+        if lang == "hi":
+            return {
+                "speak": "आपका स्वागत है! यदि आपको इन्वेंटरी, कीमतों या रिपोर्ट्स में और सहायता चाहिए तो ज़रूर बताएं।",
+                "display": "आपका स्वागत है! VANTIQ आपकी सेवा में उपस्थित है।"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Aapka swagat hai! Agar aapko inventory, pricing ya reports mein aur madad chahiye to zaroor batayein.",
+                "display": "You're welcome! VANTIQ ready for your next query."
+            }
+        else:
+            return {
+                "speak": "You're welcome! Let me know if you need any other business insights or data.",
+                "display": "You're welcome! Let me know if you need any other business insights."
+            }
+
+    elif intent == "prompt_injection":
+        if lang == "hi":
+            return {
+                "speak": "मैं सिस्टम निर्देशों को बदलने या आंतरिक डेटा तक पहुँचने के अनुरोधों को स्वीकार नहीं कर सकता। मैं आपके बिज़नेस डेटा और इन्वेंटरी में सहायता के लिए तैयार हूँ।",
+                "display": "सुरक्षा अलर्ट: अनधिकृत निर्देश अस्वीकार किए गए।"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Main core system instructions ko override karne ya restricted internal data access karne ke requests ko process nahi kar sakta. Main aapke business data aur inventory mein madad ke liye taiyaar hoon.",
+                "display": "Security Notice: System override instructions neutralized."
+            }
+        else:
+            return {
+                "speak": "I cannot fulfill requests attempting to override core system instructions or access restricted internal data. I am ready to assist you with business data, inventory, and pricing.",
+                "display": "Security Protocol: Direct system prompt overrides are restricted."
+            }
+
+    elif intent == "product_not_found":
+        name = data.get("name") or data.get("query") or "Product"
+        if lang == "hi":
+            return {
+                "speak": f"कैटलॉग में '{name}' नाम का कोई प्रोडक्ट नहीं मिला। क्या आप उपलब्ध प्रोडक्ट्स की सूची देखना चाहते हैं?",
+                "display": f"'{name}': कैटलॉग में नहीं मिला"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": f"Product '{name}' catalogue mein nahi mila. Kya aap saare available products dekhna chahte hain?",
+                "display": f"'{name}': Not found in catalogue"
+            }
+        else:
+            return {
+                "speak": f"Product '{name}' was not found in the catalogue. Would you like to view all active products?",
+                "display": f"'{name}': Not found in catalogue"
+            }
+
+    elif intent == "empty_catalogue":
+        if lang == "hi":
+            return {
+                "speak": "कैटलॉग में वर्तमान में कोई प्रोडक्ट उपलब्ध नहीं है। कैटलॉग खाली है।",
+                "display": "कैटलॉग खाली है (0 प्रोडक्ट्स)"
+            }
+        elif lang == "hinglish":
+            return {
+                "speak": "Aapke catalogue mein abhi koi product nahi hai. Catalogue bilkul empty hai.",
+                "display": "Catalogue empty hai (0 products)"
+            }
+        else:
+            return {
+                "speak": "There are currently no products available in the catalogue.",
+                "display": "Catalogue is empty (0 products)"
+            }
+
+    elif intent == "product_list":
         items = data.get("items", [])
         total = data.get("total", len(items))
         if total == 0:
@@ -469,6 +619,71 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
     cleaned, detected_lang = clean_query(q)
     c_lower = cleaned.lower()
     active_lang = lang if lang in ("hi", "hinglish") else detected_lang
+
+    # 0A. Prompt Injection Defense
+    if any(re.search(p, c_lower) for p in [
+        r'\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior)\s+(instructions|prompts|rules)\b',
+        r'\b(system\s+prompt|reveal\s+prompt|database\s+password|admin\s+password|show\s+secret)\b',
+        r'\b(drop\s+table|delete\s+from|rm\s+-rf)\b'
+    ]):
+        return ("prompt_injection", {})
+
+    # 0B. Identity ("Kaun ho tum?", "Who are you?", "Tum kaun ho?")
+    if any(phrase in c_lower for phrase in [
+        'kaun ho tum', 'tum kaun ho', 'aap kaun hain', 'kon ho tum', 'tum kon ho',
+        'who are you', 'who are u', 'who r u', 'what is your name', 'tumhara naam kya hai',
+        'introduce yourself', 'apna intro do', 'apna parichay do', 'who made you',
+        'tumhe kisne banaya', 'what is vantiq', 'vantiq kya hai', 'tum kya ho',
+        'कौन हो तुम', 'तुम कौन हो', 'आप कौन हैं', 'तुम्हारा नाम क्या है', 'तुम क्या हो'
+    ]) or c_lower.strip('?. ') in ('who are you', 'kaun ho tum', 'tum kaun ho', 'who are u', 'aap kaun hain'):
+        return ("identity", {})
+
+    # 0C. Capabilities ("Tum kya kar sakte ho?", "What can you do?")
+    if any(phrase in c_lower for phrase in [
+        'tum kya kar sakte ho', 'aap kya kar sakte hain', 'kya kar sakte ho',
+        'what can you do', 'what do you do', 'apni capabilities batao',
+        'what are your capabilities', 'what can vantiq do', 'tumhari capabilities kya hai',
+        'तुम क्या कर सकते हो', 'आप क्या कर सकते हैं', 'क्या कर सकते हो'
+    ]) or c_lower.strip('?. ') in ('what can you do', 'tum kya kar sakte ho', 'capabilities'):
+        return ("capabilities", {})
+
+    # 0D. Greetings ("Hello", "Hi", "Namaste", "Kaise ho")
+    if any(phrase in c_lower for phrase in [
+        'namaste', 'kaise ho', 'how are you', 'kya haal hai', 'kaisa hai',
+        'good morning', 'good evening', 'good afternoon', 'नमस्ते', 'कैसे हो', 'क्या हाल है'
+    ]) or c_lower.strip('?. ') in ('hello', 'hi', 'hey', 'namaste', 'greetings', 'hola'):
+        return ("greeting", {})
+
+    # 0E. Acknowledgement ("Thank you", "Thanks", "Dhanyawad", "Shukriya")
+    if any(phrase in c_lower for phrase in [
+        'thank you', 'thanks a lot', 'thank u', 'dhanyawad', 'dhanyavaad',
+        'shukriya', 'bahut badhiya', 'great job', 'good job', 'awesome work',
+        'धन्यवाद', 'शुक्रिया'
+    ]) or c_lower.strip('?. ') in ('thank you', 'thanks', 'thank u', 'dhanyawad', 'shukriya', 'thx'):
+        return ("acknowledgement", {})
+
+    # 0F. Multi-turn Follow-up: Language Explanation ("Explain that in Hindi")
+    if any(phrase in c_lower for phrase in [
+        'explain that in hindi', 'explain this in hindi', 'translate that in hindi',
+        'translate this in hindi', 'hindi me samjhao', 'hindi mein samjhao',
+        'isko hindi me batao', 'isko hindi mein batao', 'isse hindi me batao',
+        'हिंदी में समझाओ', 'हिंदी में बताओ'
+    ]):
+        return ("follow_up_explain_lang", {"target_language": "Hindi"})
+
+    if any(phrase in c_lower for phrase in [
+        'explain that in english', 'explain this in english', 'translate that in english',
+        'translate this in english', 'english me samjhao', 'english mein samjhao',
+        'isko english me batao', 'isko english mein batao'
+    ]):
+        return ("follow_up_explain_lang", {"target_language": "English"})
+
+    if any(phrase in c_lower for phrase in [
+        'explain that in hinglish', 'explain this in hinglish', 'translate that in hinglish',
+        'translate this in hinglish', 'hinglish me samjhao', 'hinglish mein samjhao',
+        'isko hinglish me batao', 'isko hinglish mein batao'
+    ]):
+        return ("follow_up_explain_lang", {"target_language": "Hinglish"})
 
     # 1. Product Verification
     if any(phrase in c_lower for phrase in [
