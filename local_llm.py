@@ -43,6 +43,8 @@ CANONICAL_INTENTS = {
     "out_of_stock_products",
     "lowest_stock_products",
     "product_price",
+    "product_margin",
+    "catalogue_margin",
     "supplier_lookup",
     "cheapest_product",
     "expensive_product",
@@ -250,6 +252,8 @@ def interpret_natural_language(
         "- lowest_stock_products: products ordered by least stock (e.g., 'sabse kam stock kin products ka hai')\n"
         "- products_without_price: products with no selling price configured\n"
         "- product_price: get selling price or purchase cost of a specific product\n"
+        "- product_margin: get gross margin, profit, or markup percentage for a specific product (e.g., 'margin kya hai chair me', 'chair ka margin kitna hai', 'what is the margin of chair')\n"
+        "- catalogue_margin: get overall or average gross margin across the catalogue or business (e.g., 'margin kya hai', 'what is the average margin', 'highest margin product')\n"
         "- supplier_lookup: find supplier details for a product or list suppliers (e.g., 'supplier of <Product>', '<Product> ka supplier kaun hai', 'list suppliers')\n"
         "- cheapest_product: find the cheapest product from previous list (e.g., 'inmein sabse sasta kaunsa hai', 'which is cheapest')\n"
         "- expensive_product: find most expensive product from previous list\n"

@@ -377,10 +377,57 @@ async function executeCommand(cmd) {
                 <div style="margin-top: 10px;">
                     <button class="launch-bi-btn" onclick="openCatalogueModal()">OPEN INVENTORY</button>
                 </div>
+        } else if (data.action === 'product_margin' || data.action === 'catalogue_margin') {
+            let tableHtml = renderTableHtml(data.table);
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            let metricsHtml = '';
+            if (data.metrics) {
+                metricsHtml = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 8px 0;">
+                        <div style="background: rgba(0, 240, 255, 0.08); border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 4px; padding: 6px 8px; text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">SELLING PRICE</div>
+                            <div style="font-size: 0.95rem; font-weight: bold; color: #fff;">₹${(data.metrics.selling_price || 0).toFixed(2)}</div>
+                        </div>
+                        <div style="background: rgba(0, 240, 255, 0.08); border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 4px; padding: 6px 8px; text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">COST PRICE</div>
+                            <div style="font-size: 0.95rem; font-weight: bold; color: #fff;">₹${(data.metrics.purchase_price || 0).toFixed(2)}</div>
+                        </div>
+                        <div style="background: rgba(0, 255, 128, 0.08); border: 1px solid rgba(0, 255, 128, 0.3); border-radius: 4px; padding: 6px 8px; text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">GROSS PROFIT</div>
+                            <div style="font-size: 0.95rem; font-weight: bold; color: #00ff80;">₹${(data.metrics.gross_profit || 0).toFixed(2)}</div>
+                        </div>
+                        <div style="background: rgba(0, 255, 128, 0.12); border: 1px solid rgba(0, 255, 128, 0.4); border-radius: 4px; padding: 6px 8px; text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted);">MARGIN %</div>
+                            <div style="font-size: 0.95rem; font-weight: bold; color: #00ff80;">${data.metrics.gross_margin_pct}%</div>
+                        </div>
+                    </div>
+                `;
+            }
+            displayIntelCard('PROFITABILITY MATRIX', `
+                <div class="source-badge">SOURCE: ${data.source || 'Profitability Analysis'}</div>
+                <h4 style="color: var(--cyan); margin: 6px 0;">${escapeHtml(data.display)}</h4>
+                <p style="color: #fff; line-height: 1.4; margin-bottom: 6px;">${escapeHtml(data.speak)}</p>
+                ${metricsHtml}
+                ${tableHtml}
+                <div style="margin-top: 10px;">
+                    <button class="launch-bi-btn" onclick="openCatalogueModal()">VIEW IN CATALOGUE</button>
+                </div>
                 ${followUps}
             `);
 
-        } else if (data.action === 'dataset_summary' || data.action === 'dataset_dimensions' || data.action === 'dataset_columns' || data.action === 'dataset_missing_values' || data.action === 'dataset_duplicates' || data.action === 'dataset_head' || data.action === 'dataset_stats' || data.action === 'dataset_filter' || data.action === 'dataset_group' || data.action === 'dataset_dates') {
+        } else if (data.action === 'supplier_lookup' || data.action === 'supplier_list') {
+            let tableHtml = renderTableHtml(data.table);
+            let followUps = renderFollowUpsHtml(data.follow_ups);
+            displayIntelCard('SUPPLIER LEDGER', `
+                <div class="source-badge">SOURCE: ${data.source || 'Supplier Ledger'}</div>
+                <h4 style="color: var(--cyan); margin: 6px 0;">${escapeHtml(data.display)}</h4>
+                <p style="color: #fff; line-height: 1.4; margin-bottom: 8px;">${escapeHtml(data.speak)}</p>
+                ${tableHtml}
+                <div style="margin-top: 10px;">
+                    <button class="launch-bi-btn" onclick="openCatalogueModal()">OPEN CATALOGUE</button>
+                </div>
+                ${followUps}
+            `);
             let tableHtml = renderTableHtml(data.table);
             let followUps = renderFollowUpsHtml(data.follow_ups);
             displayIntelCard('DATASET INTELLIGENCE', `

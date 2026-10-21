@@ -2373,6 +2373,16 @@ Arc Reactor Generation IV, Mark 85 Autonomous Avionics System
                 "reorder_level": 15.0,
                 "unit": "pack"
             })
+            self.client.post('/api/products', json={
+                "name": "Chair",
+                "sku": "FURN-CHR-003",
+                "category": "Furniture",
+                "purchase_price": 27.95,
+                "selling_price": 384.82,
+                "opening_stock": 20.0,
+                "reorder_level": 5.0,
+                "unit": "piece"
+            })
 
     def test_100_multilingual_language_detection(self):
         """Verify accurate language classification: English, Hindi Devanagari, and Hinglish"""
@@ -2604,6 +2614,33 @@ Arc Reactor Generation IV, Mark 85 Autonomous Avionics System
         self.assertEqual(res_check.status_code, 200)
         self.assertGreaterEqual(res_check.get_json().get("total_count", 0), 1)
         print("[PASS] SQL and code injection attempts safely sanitized; database integrity preserved.")
+
+    def test_113_product_and_catalogue_margin(self):
+        """Verify product-specific and catalogue-wide margin queries in Hinglish and English"""
+        self._ensure_test_products()
+        # 1. Product margin query in Hinglish: "margin kya hai chair me?"
+        res1 = self.client.post('/api/command', json={"command": "margin kya hai chair me?"})
+        self.assertEqual(res1.status_code, 200)
+        d1 = res1.get_json()
+        self.assertEqual(d1["action"], "product_margin")
+        self.assertIn("metrics", d1)
+        self.assertGreater(d1["metrics"]["gross_margin_pct"], 0)
+
+        # 2. Product margin query in English: "what is the margin of Capacitor"
+        res2 = self.client.post('/api/command', json={"command": "what is the margin of Capacitor"})
+        self.assertEqual(res2.status_code, 200)
+        d2 = res2.get_json()
+        self.assertEqual(d2["action"], "product_margin")
+        self.assertEqual(d2["product"]["name"], "Capacitor")
+
+        # 3. Overall margin query: "margin kya hai"
+        res3 = self.client.post('/api/command', json={"command": "margin kya hai"})
+        self.assertEqual(res3.status_code, 200)
+        d3 = res3.get_json()
+        self.assertEqual(d3["action"], "catalogue_margin")
+        self.assertIn("average_margin_pct", d3)
+        self.assertGreater(d3["average_margin_pct"], 0)
+        print("[PASS] Product and catalogue margin queries return exact calculations in user's language.")
 
 
 if __name__ == '__main__':

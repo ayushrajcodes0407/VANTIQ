@@ -571,6 +571,162 @@ def _build_selling_price_response(target: str, cat_conn: Any, source_label: str 
         }
 
 
+def _build_product_margin_response(target: str, cat_conn: Any, source_label: str = "Profitability Analysis", lang: str = "en") -> Dict[str, Any]:
+    target = (target or "").rstrip('?.').strip()
+    if target in ("context_product", "is product", "iss product", "this product", "product") and multilingual.SESSION_CONTEXT.last_product:
+        target = multilingual.SESSION_CONTEXT.last_product["name"]
+
+    res = database.list_products(search=target, is_active=True, conn=cat_conn)
+    items = res.get("items", [])
+
+    if not items:
+        if lang in ("hi", "hinglish"):
+            loc = multilingual.format_multilingual_response("product_not_found", lang, {"query": target})
+            speak_text = loc["speak"]
+            display_text = loc["display"]
+        else:
+            speak_text = f"Boss, no product matching '{target}' was found in the catalogue."
+            display_text = f"Margin: No match for '{target}'"
+        return {
+            "speak": speak_text,
+            "display": display_text,
+            "action": "product_margin",
+            "source": source_label,
+            "source_type": "catalogue",
+            "match_count": 0
+        }
+    elif len(items) > 1:
+        candidates = ", ".join([f"{p['name']} (SKU: {p['sku'] or 'N/A'})" for p in items[:3]])
+        speak_text = f"Multiple products match '{target}': {candidates}. Please clarify which product margin you require."
+        return {
+            "speak": speak_text,
+            "display": f"Multiple matches for '{target}'",
+            "action": "product_margin",
+            "source": source_label,
+            "source_type": "catalogue",
+            "match_count": len(items),
+            "candidates": items[:5]
+        }
+    else:
+        p = items[0]
+        multilingual.SESSION_CONTEXT.update_product(p, language=lang)
+        sp = float(p.get("selling_price") or 0.0)
+        cp = float(p.get("purchase_price") or 0.0)
+        profit = sp - cp
+        margin_pct = ((profit / sp) * 100.0) if sp > 0 else 0.0
+        markup_pct = ((profit / cp) * 100.0) if cp > 0 else 0.0
+
+        loc = multilingual.format_multilingual_response("product_margin", lang, {
+            "name": p["name"],
+            "profit": profit,
+            "margin_pct": margin_pct,
+            "selling_price": sp,
+            "purchase_price": cp
+        })
+
+        return {
+            "speak": loc["speak"],
+            "display": loc["display"],
+            "action": "product_margin",
+            "source": source_label,
+            "source_type": "catalogue",
+            "match_count": 1,
+            "product": p,
+            "metrics": {
+                "selling_price": sp,
+                "purchase_price": cp,
+                "gross_profit": profit,
+                "gross_margin_pct": round(margin_pct, 2),
+                "markup_pct": round(markup_pct, 2)
+            },
+            "follow_ups": [f"What is the stock of {p['name']}?", "Show all products", "Check overall margin"]
+        }
+
+
+def _build_catalogue_margin_response(cat_conn: Any, context: Optional[Dict[str, Any]] = None, db_path: Optional[str] = None, source_label: str = "Profitability Analysis", lang: str = "en") -> Dict[str, Any]:
+    prods = database.list_products(is_active=True, page_size=1000, conn=cat_conn).get("items", [])
+    priced = []
+    for p in prods:
+        sp = float(p.get("selling_price") or 0.0)
+        cp = float(p.get("purchase_price") or 0.0)
+        if sp > 0 and cp > 0:
+            profit = sp - cp
+            m_pct = (profit / sp) * 100.0
+            priced.append({
+                "name": p.get("name"),
+                "sku": p.get("sku") or "--",
+                "selling_price": sp,
+                "purchase_price": cp,
+                "profit": profit,
+                "margin_pct": round(m_pct, 2)
+            })
+
+    if not priced:
+        bi_rep = (context or {}).get("current_bi_report")
+        if bi_rep and bi_rep.get("pricing", {}).get("computed"):
+            pricing = bi_rep["pricing"]
+            avg_m = pricing.get("average_gross_margin_pct", 0)
+            top_p = pricing.get("highest_margin_products", [])
+            leader = top_p[0] if top_p else {"product": "N/A", "gross_margin_pct": 0}
+            loc = multilingual.format_multilingual_response("catalogue_margin", lang, {
+                "average_margin_pct": avg_m,
+                "highest_margin_product": leader.get("product"),
+                "highest_margin_pct": leader.get("gross_margin_pct", 0)
+            })
+            return {
+                "speak": loc["speak"],
+                "display": loc["display"],
+                "action": "catalogue_margin",
+                "source": "BI Commercial Intelligence",
+                "source_type": "report",
+                "average_margin_pct": avg_m,
+                "leader": leader
+            }
+
+        speak_text = "No products with valid purchase and selling prices were found to compute margins."
+        return {
+            "speak": speak_text,
+            "display": "Margin data unavailable (0 priced products)",
+            "action": "catalogue_margin",
+            "source": source_label,
+            "source_type": "catalogue"
+        }
+
+    priced.sort(key=lambda x: x["margin_pct"], reverse=True)
+    avg_m = round(sum(p["margin_pct"] for p in priced) / len(priced), 2)
+    top_p = priced[0]
+    low_p = priced[-1]
+
+    loc = multilingual.format_multilingual_response("catalogue_margin", lang, {
+        "average_margin_pct": avg_m,
+        "highest_margin_product": top_p["name"],
+        "highest_margin_pct": top_p["margin_pct"],
+        "lowest_margin_product": low_p["name"],
+        "lowest_margin_pct": low_p["margin_pct"]
+    })
+
+    rows = [{
+        "name": p["name"],
+        "cost": f"₹{p['purchase_price']:,.2f}",
+        "sell": f"₹{p['selling_price']:,.2f}",
+        "profit": f"₹{p['profit']:,.2f}",
+        "margin": f"{p['margin_pct']}%"
+    } for p in priced]
+
+    return {
+        "speak": loc["speak"],
+        "display": loc["display"],
+        "action": "catalogue_margin",
+        "source": source_label,
+        "source_type": "catalogue",
+        "average_margin_pct": avg_m,
+        "highest_margin": top_p,
+        "lowest_margin": low_p,
+        "table": {"columns": ["PRODUCT", "COST", "SELLING", "PROFIT", "MARGIN %"], "rows": rows},
+        "follow_ups": [f"What is the margin of {top_p['name']}?", "Show all products"]
+    }
+
+
 def _build_stock_response(target: str, cat_conn: Any, source_label: str = "Inventory Balance", lang: str = "en") -> Dict[str, Any]:
     target = (target or "").rstrip('?.').strip()
     # Check contextual resolution if target is generic
@@ -881,6 +1037,18 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
             target = m_params.get("product_name")
             if target:
                 return _build_selling_price_response(target, cat_conn, source_label="Product Catalogue", lang=detected_lang)
+        elif m_intent == "product_margin":
+            target = m_params.get("product_name")
+            if target:
+                return _build_product_margin_response(target, cat_conn, source_label="Profitability Analysis", lang=detected_lang)
+            return _build_catalogue_margin_response(cat_conn, context=context, db_path=db_path, source_label="Profitability Analysis", lang=detected_lang)
+        elif m_intent == "catalogue_margin":
+            return _build_catalogue_margin_response(cat_conn, context=context, db_path=db_path, source_label="Profitability Analysis", lang=detected_lang)
+        elif m_intent == "supplier_lookup":
+            target = m_params.get("product_name")
+            if m_params.get("list_all") or not target:
+                return _build_supplier_response(None, cat_conn, source_label="Supplier Ledger", lang=detected_lang)
+            return _build_supplier_response(target, cat_conn, source_label="Supplier Ledger", lang=detected_lang)
         elif m_intent == "explanation":
             concept = m_params.get("concept", cleaned_cmd)
             expl = local_llm.generate_explanation(concept, language=detected_lang)
@@ -1000,6 +1168,13 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
                     if any(w in c_lower for w in ['purchase', 'cost', 'buy']) or 'purchase' in op or 'cost' in op:
                         return _build_purchase_cost_response(target, cat_conn, source_label="Product Catalogue")
                     return _build_selling_price_response(target, cat_conn, source_label="Product Catalogue", lang=resp_lang)
+
+            elif intent == "product_margin":
+                target = params.get("target_name") or params.get("product_name") or params.get("name") or params.get("sku") or entity
+                return _build_product_margin_response(target, cat_conn, source_label="Profitability Analysis", lang=resp_lang)
+
+            elif intent == "catalogue_margin":
+                return _build_catalogue_margin_response(cat_conn, context=context, db_path=db_path, source_label="Profitability Analysis", lang=resp_lang)
 
             elif intent == "product_search":
                 target = params.get("target_name") or params.get("product_name") or params.get("name") or params.get("sku") or entity
@@ -1205,6 +1380,14 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
         if any(k in c_lower for k in ['list suppliers', 'all suppliers', 'show suppliers']):
             return _build_supplier_response(None, cat_conn, source_label="Supplier Ledger")
         return _build_supplier_response(target, cat_conn, source_label="Supplier Ledger")
+
+    # 1K. Margin Analysis (Product & Catalogue)
+    if 'margin' in c_lower or 'munafa' in c_lower or 'मार्जिन' in c_lower:
+        m_intent = multilingual.match_multilingual_intent(cleaned_cmd, lang=detected_lang)
+        if m_intent and m_intent[0] == "product_margin":
+            return _build_product_margin_response(m_intent[1].get("product_name"), cat_conn, source_label="Profitability Analysis", lang=detected_lang)
+        elif m_intent and m_intent[0] == "catalogue_margin":
+            return _build_catalogue_margin_response(cat_conn, context=context, db_path=db_path, source_label="Profitability Analysis", lang=detected_lang)
 
     # =========================================================================
     # 2. DATASET-AWARE NATURAL LANGUAGE QUERIES
@@ -1531,43 +1714,8 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
         }
 
     # 3B. Highest Margin / Pricing Analysis
-    if any(k in c_lower for k in ['highest margin', 'highest margins', 'margin', 'pricing and margins', 'profitability', 'profit margin']):
-        bi_rep = context.get("current_bi_report")
-        if not bi_rep:
-            ds_res = database.list_datasets(page=1, page_size=1, db_path=db_path)
-            latest_ds = ds_res.get("datasets") or ds_res.get("items") or []
-            if latest_ds:
-                rep_record = database.get_latest_report_for_dataset(latest_ds[0]["id"], db_path=db_path)
-                if rep_record:
-                    bi_rep = rep_record.get("report_content")
-
-        if not bi_rep:
-            msg = "No dataset loaded, Boss. Please upload product pricing data first."
-            return {"speak": msg, "display": msg, "action": "bi_no_data", "source": "BI Engine", "source_type": "report"}
-
-        pricing = bi_rep.get("pricing", {})
-        if not pricing.get("computed"):
-            missing = ", ".join(pricing.get("missing_fields", ["Cost Price", "Selling Price"]))
-            speak_text = f"Pricing and margin metrics cannot be computed, Boss. The required fields ({missing}) are missing from this dataset."
-            return {"speak": speak_text, "display": speak_text, "action": "bi_pricing_unavailable", "source": "BI Pricing", "source_type": "report"}
-
-        top_p = pricing.get("highest_margin_products", [])
-        avg_m = pricing.get("average_gross_margin_pct", 0)
-        leader = top_p[0] if top_p else None
-        if leader:
-            speak_text = f"Boss, the highest gross margin product is {leader['product']} at {leader['gross_margin_pct']} percent margin. The average gross margin is {avg_m} percent."
-        else:
-            speak_text = f"Boss, average gross margin is {avg_m} percent across available pricing records."
-
-        return {
-            "speak": speak_text,
-            "display": f"Avg Margin: {avg_m}% | Top: {leader['product'] if leader else 'N/A'}",
-            "action": "bi_pricing",
-            "source": "Commercial Intelligence",
-            "source_type": "report",
-            "pricing": pricing,
-            "follow_ups": ["Show all products", "Check inventory summary"]
-        }
+    if any(k in c_lower for k in ['highest margin', 'highest margins', 'pricing and margins', 'profitability', 'profit margin', 'bi margin']):
+        return _build_catalogue_margin_response(cat_conn, context=context, db_path=db_path, source_label="Commercial Intelligence", lang=resp_lang)
 
     # 3C. Inventory Telemetry & Low Stock Status
     if any(k in c_lower for k in ['low stock status', 'inventory status', 'bi inventory', 'stock status']):

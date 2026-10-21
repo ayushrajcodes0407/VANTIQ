@@ -418,6 +418,38 @@ def format_multilingual_response(
                     display = f"{product_name} Supplier: {supplier_name}"
         return {"speak": speak, "display": display}
 
+    elif intent == "product_margin":
+        name = data.get("name", "Product")
+        profit = data.get("profit", 0.0)
+        margin_pct = data.get("margin_pct", 0.0)
+        sp = data.get("selling_price", 0.0)
+        cp = data.get("purchase_price", 0.0)
+        if lang == "hi":
+            speak = f"{name} पर ग्रॉस मार्जिन {currency}{profit:,.2f} ({margin_pct:.1f}%) है। इसका विक्रय मूल्य {currency}{sp:,.2f} और खरीद लागत {currency}{cp:,.2f} है।"
+            display = f"{name} मार्जिन: {currency}{profit:,.2f} ({margin_pct:.1f}%) | विक्रय: {currency}{sp:,.2f} | लागत: {currency}{cp:,.2f}"
+        elif lang == "hinglish":
+            speak = f"{name} par gross margin {currency}{profit:,.2f} ({margin_pct:.1f}%) hai. Iska selling price {currency}{sp:,.2f} aur purchase price {currency}{cp:,.2f} hai."
+            display = f"{name} Margin: {currency}{profit:,.2f} ({margin_pct:.1f}%) | Selling: {currency}{sp:,.2f} | Cost: {currency}{cp:,.2f}"
+        else:
+            speak = f"The gross margin for {name} is {currency}{profit:,.2f} ({margin_pct:.1f}%), with selling price {currency}{sp:,.2f} and cost {currency}{cp:,.2f}."
+            display = f"{name} Margin: {currency}{profit:,.2f} ({margin_pct:.1f}%) | Selling: {currency}{sp:,.2f} | Cost: {currency}{cp:,.2f}"
+        return {"speak": speak, "display": display}
+
+    elif intent == "catalogue_margin":
+        avg_m = data.get("average_margin_pct", 0.0)
+        top_prod = data.get("highest_margin_product", "N/A")
+        top_pct = data.get("highest_margin_pct", 0.0)
+        if lang == "hi":
+            speak = f"कैटलॉग का समग्र औसत ग्रॉस मार्जिन {avg_m:.1f}% है। सबसे अधिक मार्जिन {top_prod} ({top_pct:.1f}%) पर है।"
+            display = f"औसत मार्जिन: {avg_m:.1f}% | शीर्ष: {top_prod} ({top_pct:.1f}%)"
+        elif lang == "hinglish":
+            speak = f"Catalogue ka overall average gross margin {avg_m:.1f}% hai. Sabse zyada margin {top_prod} ({top_pct:.1f}%) par hai."
+            display = f"Avg Margin: {avg_m:.1f}% | Top: {top_prod} ({top_pct:.1f}%)"
+        else:
+            speak = f"The overall average gross margin across catalogue products is {avg_m:.1f}%. The highest margin product is {top_prod} at {top_pct:.1f}%."
+            display = f"Avg Margin: {avg_m:.1f}% | Top: {top_prod} ({top_pct:.1f}%)"
+        return {"speak": speak, "display": display}
+
     # Default fallback
     return {
         "speak": data.get("speak", "Processed successfully."),
@@ -589,6 +621,64 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
             return ("explanation", {"concept": "purchase price and selling price difference", "language": active_lang})
         if ('gross margin' in c_lower and 'markup' in c_lower) or ('margin' in c_lower and 'markup' in c_lower):
             return ("explanation", {"concept": "gross margin and markup difference", "language": active_lang})
+
+    # 13. Margin Inquiries (Product Margin & Overall Margin)
+    # E.g. "margin kya hai chair me?", "chair ka margin kya hai", "what is the margin of chair", "margin kya hai"
+    if 'margin' in c_lower or 'munafa' in c_lower or 'मार्जिन' in c_lower:
+        # Conceptual definition
+        if any(p in c_lower for p in [
+            'margin kya hota hai', 'gross margin kya hota hai', 'what is margin', 'what is gross margin',
+            'margin explain', 'explain margin', 'explain gross margin', 'define margin', 'define gross margin'
+        ]) or (('explain' in c_lower or 'define' in c_lower) and 'margin' in c_lower):
+            target_lang = "Hindi" if "hindi" in c_lower else ("Hinglish" if active_lang == "hinglish" else "English")
+            return ("explanation", {"concept": "gross margin", "language": target_lang})
+
+        # Product margin: 'margin kya hai <product> me/mein'
+        m1 = re.search(r'margin\s+(?:kya\s+hai\s+|kitna\s+hai\s+)?([a-zA-Z0-9_\-\s]+?)\s+(?:me|mein)\b', c_lower)
+        if m1:
+            cand = m1.group(1).strip()
+            cand = re.sub(r'^(is|iss|is product|mujhe|batao|zara)\s+', '', cand).strip()
+            if cand and cand not in ('overall', 'total', 'catalogue', 'all', 'product'):
+                return ("product_margin", {"product_name": cand})
+
+        # Product margin: '<product> me/mein kitna margin hai' or '<product> me margin'
+        m2 = re.search(r'([a-zA-Z0-9_\-\s]+?)\s+(?:me|mein)\s+(?:kitna\s+)?margin', c_lower)
+        if m2:
+            cand = m2.group(1).strip()
+            cand = re.sub(r'^(is|iss|is product|mujhe|batao|zara)\s+', '', cand).strip()
+            if cand and cand not in ('overall', 'total', 'catalogue', 'all', 'product'):
+                return ("product_margin", {"product_name": cand})
+
+        # Product margin: '<product> ka margin'
+        m3 = re.search(r'([a-zA-Z0-9_\-\s]+?)\s+ka\s+margin', c_lower)
+        if m3:
+            cand = m3.group(1).strip()
+            cand = re.sub(r'^(is|iss|is product|mujhe|batao|zara)\s+', '', cand).strip()
+            if cand and cand not in ('overall', 'total', 'average', 'catalogue', 'all', 'product'):
+                return ("product_margin", {"product_name": cand})
+
+        # Product margin in English: 'margin of/on/for <product>'
+        m4 = re.search(r'(?:what\s+is\s+(?:the\s+)?)?(?:gross\s+)?margin\s+(?:of|on|for|in)\s+([a-zA-Z0-9_\-\s]+)', c_lower)
+        if m4:
+            cand = m4.group(1).strip().rstrip('?.')
+            cand = re.sub(r'\b(bro|bhai|vantiq|jarvis|please)\b', '', cand).strip()
+            if cand and cand not in ('product', 'catalogue', 'all', 'products', 'inventory', 'everything'):
+                return ("product_margin", {"product_name": cand})
+
+        # Hindi Devanagari: '<Product> का/में मार्जिन'
+        hi_margin_match = re.search(r'([\u0900-\u097F\w\s]+?)\s+(?:का|में)\s+(?:ग्रॉस\s+)?मार्जिन', c_lower)
+        if hi_margin_match:
+            cand = hi_margin_match.group(1).strip()
+            if cand and cand not in ('कुल', 'सब', 'औसत', 'कैटलॉग'):
+                return ("product_margin", {"product_name": cand})
+
+        # Overall / Catalogue margin (no specific product mentioned)
+        if any(p in c_lower for p in [
+            'margin kya hai', 'margin kitna hai', 'overall margin', 'average margin',
+            'what is the margin', 'what is our margin', 'highest margin', 'profit margin kya hai',
+            'कुल मार्जिन', 'औसत मार्जिन', 'मार्जिन क्या है'
+        ]) or c_lower.strip() in ('margin', 'gross margin', 'profit margin', 'margin kya hai?'):
+            return ("catalogue_margin", {})
 
     return None
 
