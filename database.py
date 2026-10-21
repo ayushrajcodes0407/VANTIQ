@@ -2272,3 +2272,49 @@ def commit_product_spreadsheet_import(dataset_id: str, column_mapping: Dict[str,
         if close_after:
             conn.close()
 
+
+def list_suppliers(is_active: bool = True, conn: Optional[sqlite3.Connection] = None, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lists registered suppliers from SQLite."""
+    close_after = False
+    if conn is None:
+        conn = get_connection(db_path)
+        close_after = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM suppliers WHERE is_active = ? ORDER BY name ASC", (1 if is_active else 0,))
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        if close_after:
+            conn.close()
+
+
+def get_supplier_for_product(target: str, conn: Optional[sqlite3.Connection] = None, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Retrieves product and linked supplier information."""
+    close_after = False
+    if conn is None:
+        conn = get_connection(db_path)
+        close_after = True
+
+    try:
+        cur = conn.cursor()
+        t = (target or "").strip().rstrip('?.')
+        cur.execute(
+            """
+            SELECT p.id as product_id, p.name as product_name, p.sku as product_sku,
+                   s.id as supplier_id, s.name as supplier_name, s.contact_name, s.phone, s.email
+            FROM products p
+            LEFT JOIN suppliers s ON p.supplier_id = s.id
+            WHERE p.is_active = 1 AND (LOWER(p.name) LIKE ? OR LOWER(p.sku) = ?)
+            LIMIT 1
+            """,
+            (f"%{t.lower()}%", t.lower())
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        if close_after:
+            conn.close()
+
+

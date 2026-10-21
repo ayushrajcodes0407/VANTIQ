@@ -2537,6 +2537,74 @@ Arc Reactor Generation IV, Mark 85 Autonomous Avionics System
         self.assertIn("empty", formatted_h["speak"].lower())
         print("[PASS] Empty catalogue responses properly localized in Hindi and Hinglish.")
 
+    def test_111_supplier_lookup(self):
+        """Verify supplier inquiries for products and list of suppliers in English and Hinglish"""
+        self._ensure_test_products()
+        import database
+        import datetime
+        # Seed a test supplier and link to Capacitor
+        conn = database.get_connection()
+        try:
+            cur = conn.cursor()
+            now_str = datetime.datetime.utcnow().isoformat()
+            cur.execute(
+                "INSERT INTO suppliers (name, contact_name, phone, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                ("Apex Electronics Corp", "Rajesh Sharma", "+91 9876543210", "apex@example.com", now_str, now_str)
+            )
+            supp_id = cur.lastrowid
+            cur.execute("UPDATE products SET supplier_id = ? WHERE LOWER(name) LIKE '%capacitor%'", (supp_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Test English supplier lookup
+        res_en = self.client.post('/api/command', json={"command": "Who is the supplier for Capacitor?"})
+        self.assertEqual(res_en.status_code, 200)
+        data_en = res_en.get_json()
+        self.assertEqual(data_en["action"], "supplier_lookup")
+        self.assertIn("Apex Electronics", data_en["speak"])
+
+        # Test Hinglish supplier lookup
+        res_hi = self.client.post('/api/command', json={"command": "Capacitor ka supplier kaun hai"})
+        self.assertEqual(res_hi.status_code, 200)
+        data_hi = res_hi.get_json()
+        self.assertEqual(data_hi["action"], "supplier_lookup")
+        self.assertIn("Apex Electronics", data_hi["speak"])
+
+        # Test List all suppliers
+        res_list = self.client.post('/api/command', json={"command": "list suppliers"})
+        self.assertEqual(res_list.status_code, 200)
+        data_list = res_list.get_json()
+        self.assertEqual(data_list["action"], "supplier_list")
+        self.assertIn("suppliers", data_list)
+        print("[PASS] Supplier lookup returns linked supplier details and registry lists accurately.")
+
+    def test_112_sql_and_code_injection_safety(self):
+        """Verify injection attacks are neutralized via parameterized queries and safe dispatch"""
+        self._ensure_test_products()
+        malicious_inputs = [
+            "'; DROP TABLE products; --",
+            "' OR '1'='1",
+            "Capacitor' UNION SELECT 1, 'hacked', 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 --",
+            "__import__('os').system('echo hacked')",
+            "eval('1+1')",
+            "{{ 7 * 7 }}"
+        ]
+
+        for mal_input in malicious_inputs:
+            res = self.client.post('/api/command', json={"command": mal_input})
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            # Must not return internal 500 error or stack trace
+            self.assertNotIn("Traceback", data.get("display", ""))
+            self.assertNotIn("syntax error", data.get("display", "").lower())
+
+        # Verify products table still exists and has records
+        res_check = self.client.get('/api/products')
+        self.assertEqual(res_check.status_code, 200)
+        self.assertGreaterEqual(res_check.get_json().get("total_count", 0), 1)
+        print("[PASS] SQL and code injection attempts safely sanitized; database integrity preserved.")
+
 
 if __name__ == '__main__':
     print("==================================================")

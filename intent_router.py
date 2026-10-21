@@ -743,6 +743,72 @@ def _build_purchase_cost_response(target: str, cat_conn: Any, source_label: str 
         }
 
 
+def _build_supplier_response(target: Optional[str] = None, cat_conn: Any = None, source_label: str = "Supplier Ledger", lang: str = "en") -> Dict[str, Any]:
+    target = (target or "").rstrip('?.').strip()
+    if not target or target.lower() in ("all", "suppliers", "general", "none"):
+        suppliers = database.list_suppliers(is_active=True, conn=cat_conn)
+        loc = multilingual.format_multilingual_response("supplier_lookup", lang, {"mode": "list", "suppliers": suppliers})
+        rows = [{
+            "name": s.get("name"),
+            "contact": s.get("contact_name") or "--",
+            "phone": s.get("phone") or "--",
+            "email": s.get("email") or "--"
+        } for s in suppliers]
+        return {
+            "speak": loc["speak"],
+            "display": loc["display"],
+            "action": "supplier_list",
+            "source": source_label,
+            "source_type": "supplier",
+            "suppliers": suppliers,
+            "table": {"columns": ["SUPPLIER NAME", "CONTACT", "PHONE", "EMAIL"], "rows": rows},
+            "follow_ups": ["Show all products", "Check inventory summary"]
+        }
+
+    # Specific product supplier lookup
+    if target in ("context_product", "is product", "iss product", "this product", "product") and multilingual.SESSION_CONTEXT.last_product:
+        target = multilingual.SESSION_CONTEXT.last_product["name"]
+
+    supp_info = database.get_supplier_for_product(target, conn=cat_conn)
+    if not supp_info:
+        if lang in ("hi", "hinglish"):
+            loc = multilingual.format_multilingual_response("product_not_found", lang, {"query": target})
+            speak_text = loc["speak"]
+            display_text = loc["display"]
+        else:
+            speak_text = f"Boss, no product matching '{target}' was found in the catalogue."
+            display_text = f"Supplier: No match for '{target}'"
+        return {
+            "speak": speak_text,
+            "display": display_text,
+            "action": "supplier_lookup",
+            "source": source_label,
+            "source_type": "supplier",
+            "match_count": 0
+        }
+
+    prod_name = supp_info.get("product_name", target)
+    supp_name = supp_info.get("supplier_name")
+    loc = multilingual.format_multilingual_response("supplier_lookup", lang, {
+        "mode": "single",
+        "product_name": prod_name,
+        "supplier_name": supp_name,
+        "contact_name": supp_info.get("contact_name"),
+        "phone": supp_info.get("phone")
+    })
+
+    return {
+        "speak": loc["speak"],
+        "display": loc["display"],
+        "action": "supplier_lookup",
+        "source": source_label,
+        "source_type": "supplier",
+        "product_name": prod_name,
+        "supplier": supp_info if supp_name else None,
+        "follow_ups": [f"What is the stock of {prod_name}?", f"What is the selling price of {prod_name}?"]
+    }
+
+
 def _handle_bi_inventory(context: Dict[str, Any], db_path: Optional[str]) -> Dict[str, Any]:
     bi_rep = context.get("current_bi_report")
     if not bi_rep:
@@ -940,6 +1006,12 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
                 if target and target.lower() not in ("product", "general", "none"):
                     return _build_find_product_response(target, cat_conn, source_label="Product Catalogue")
 
+            elif intent == "supplier_lookup":
+                target = params.get("target_name") or params.get("product_name") or params.get("name") or params.get("sku") or entity
+                if params.get("list_all") or not target or str(target).lower() in ("all", "suppliers", "general", "none"):
+                    return _build_supplier_response(None, cat_conn, source_label="Supplier Ledger", lang=resp_lang)
+                return _build_supplier_response(str(target), cat_conn, source_label="Supplier Ledger", lang=resp_lang)
+
             elif intent == "bi_inventory":
                 return _handle_bi_inventory(context, db_path)
 
@@ -1122,6 +1194,17 @@ def _route_intent_internal(cmd: str, c_lower: str, context: Dict[str, Any], db_p
                 target = target.split(pfx, 1)[1].strip()
                 break
         return _build_find_product_response(target, cat_conn, source_label="Product Catalogue")
+
+    # 1J. Supplier Lookup
+    if any(k in c_lower for k in ['supplier for', 'supplier of', 'who is the supplier', 'supplier details', 'list suppliers', 'all suppliers']):
+        target = c_lower
+        for pfx in ['who is the supplier for', 'who is the supplier of', 'supplier details for', 'supplier for', 'supplier of']:
+            if pfx in target:
+                target = target.split(pfx, 1)[1].strip()
+                break
+        if any(k in c_lower for k in ['list suppliers', 'all suppliers', 'show suppliers']):
+            return _build_supplier_response(None, cat_conn, source_label="Supplier Ledger")
+        return _build_supplier_response(target, cat_conn, source_label="Supplier Ledger")
 
     # =========================================================================
     # 2. DATASET-AWARE NATURAL LANGUAGE QUERIES

@@ -365,6 +365,59 @@ def format_multilingual_response(
             display = f"{name}: Selling Price = {currency}{price:,.2f} | Cost = {currency}{cost:,.2f}"
         return {"speak": speak, "display": display}
 
+    elif intent == "supplier_lookup":
+        mode = data.get("mode", "single")
+        if mode == "list":
+            suppliers = data.get("suppliers", [])
+            if not suppliers:
+                if lang == "hi":
+                    speak = "डेटाबेस में कोई पंजीकृत सप्लायर नहीं मिला।"
+                    display = "कोई सप्लायर नहीं मिला"
+                elif lang == "hinglish":
+                    speak = "Database mein koi registered supplier nahi mila."
+                    display = "No suppliers found"
+                else:
+                    speak = "No registered suppliers were found in the database."
+                    display = "No suppliers found"
+            else:
+                names = [s.get("name") for s in suppliers[:4] if s.get("name")]
+                sample = ", ".join(names)
+                if lang == "hi":
+                    speak = f"कुल {len(suppliers)} सप्लायर्स पंजीकृत हैं: {sample}।"
+                    display = f"सप्लायर्स ({len(suppliers)}): {sample}"
+                elif lang == "hinglish":
+                    speak = f"Catalogue mein total {len(suppliers)} suppliers registered hain: {sample}."
+                    display = f"Suppliers ({len(suppliers)}): {sample}"
+                else:
+                    speak = f"There are {len(suppliers)} registered suppliers in the database: {sample}."
+                    display = f"Suppliers ({len(suppliers)}): {sample}"
+        else:
+            product_name = data.get("product_name", "Product")
+            supplier_name = data.get("supplier_name")
+            if not supplier_name:
+                if lang == "hi":
+                    speak = f"{product_name} कैटलॉग में है, लेकिन अभी इसके लिए कोई सप्लायर लिंक नहीं है।"
+                    display = f"{product_name}: कोई सप्लायर लिंक नहीं है"
+                elif lang == "hinglish":
+                    speak = f"{product_name} catalogue mein registered hai, lekin abhi koi supplier linked nahi hai."
+                    display = f"{product_name}: No supplier linked"
+                else:
+                    speak = f"Product '{product_name}' is in the catalogue, but no supplier is currently linked."
+                    display = f"{product_name}: No supplier linked"
+            else:
+                contact = data.get("contact_name")
+                extra = f" (Contact: {contact})" if contact else ""
+                if lang == "hi":
+                    speak = f"{product_name} के सप्लायर {supplier_name} हैं{extra}।"
+                    display = f"{product_name} सप्लायर: {supplier_name}"
+                elif lang == "hinglish":
+                    speak = f"{product_name} ke supplier {supplier_name} hain{extra}."
+                    display = f"{product_name} Supplier: {supplier_name}"
+                else:
+                    speak = f"The supplier for {product_name} is {supplier_name}{extra}."
+                    display = f"{product_name} Supplier: {supplier_name}"
+        return {"speak": speak, "display": display}
+
     # Default fallback
     return {
         "speak": data.get("speak", "Processed successfully."),
@@ -432,11 +485,9 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
 
     # 6. Specific product stock query
     # E.g., "Capacitor ka stock kitna hai?", "Capacitor ka stock", "what is current stock of Capacitor"
-    # Match "<Product> ka stock kitna hai" or "<Product> ka stock"
     stock_hinglish_match = re.search(r'([a-zA-Z0-9_\-\s]+?)\s+ka\s+stock(\s+kitna\s+hai)?', c_lower)
     if stock_hinglish_match:
         cand = stock_hinglish_match.group(1).strip()
-        # Filter out generic words
         cand = re.sub(r'^(is|iss|is product|mujhe|batao|zara)\s+', '', cand).strip()
         if cand and cand not in ('current', 'total', 'kul', 'overall', 'sab', 'saare', 'product'):
             return ("product_stock", {"product_name": cand})
@@ -457,7 +508,6 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
             return ("product_stock", {"product_name": cand})
 
     # 7. Overall / Current Stock Summary (No specific product mentioned)
-    # E.g., "what is current stock bro", "what is current stock VANTIQ", "current stock", "kul stock kitna hai"
     if any(phrase in c_lower for phrase in [
         'current stock', 'what is current stock', 'overall stock', 'total stock',
         'stock summary', 'inventory summary', 'kul stock', 'stock kitna hai',
@@ -466,14 +516,15 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
         return ("inventory_summary", {})
 
     # 8. All Products / Catalogue Listing
-    # E.g., "jarvis kaun kaun se products hai", "Saare products dikhao", "all products", "show all products"
+    # E.g., "jarvis kaun kaun se products hai", "Saare products dikhao", "Sabhi products ke naam batao", "show all products"
     if any(phrase in c_lower for phrase in [
         'kaun kaun se products', 'kaun se products', 'kya kya products',
         'saare products dikhao', 'sare products dikhao', 'sab products dikhao',
+        'sabhi products ke naam', 'products ke naam', 'products ki list',
         'products dikhao', 'catalogue dikhao', 'list all products',
         'show all products', 'what are all products', 'all products',
         'saare products', 'sare products', 'sab products', 'सारे प्रोडक्ट्स दिखाओ',
-        'कौन कौन से प्रोडक्ट्स', 'प्रोडक्ट्स दिखाओ'
+        'सभी प्रोडक्ट्स के नाम', 'कौन कौन से प्रोडक्ट्स', 'प्रोडक्ट्स दिखाओ'
     ]):
         return ("product_list", {})
 
@@ -481,12 +532,13 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
     # E.g., "Kitne products hain?", "how many products do we have", "total products"
     if any(phrase in c_lower for phrase in [
         'kitne products', 'kitne product', 'total products count', 'how many products',
-        'kul kitne product', 'number of products', 'count products', 'कितने प्रोडक्ट्स'
+        'kul kitne product', 'kul kitne products', 'number of products', 'count products',
+        'कितने प्रोडक्ट्स', 'कितने प्रोडक्ट', 'कुल कितने', 'कुल कितने प्रोडक्ट'
     ]):
         return ("product_count", {})
 
     # 10. Specific product selling price
-    # E.g., "is product ka selling price kya hai", "<Product> ka selling price"
+    # Hinglish: "<Product> ka selling price kya hai", "<Product> ka price"
     price_hinglish_match = re.search(r'([a-zA-Z0-9_\-\s]+?)\s+ka\s+(?:selling\s+price|price|rate|bhav)(\s+kya\s+hai)?', c_lower)
     if price_hinglish_match:
         cand = price_hinglish_match.group(1).strip()
@@ -495,7 +547,41 @@ def match_multilingual_intent(query: str, lang: str = "en") -> Optional[Tuple[st
         if cand:
             return ("product_price", {"product_name": cand})
 
-    # 11. Conceptual / Business Difference Explanations
+    # English: "What is the selling price of <Product>?", "selling price of <Product>", "price of <Product>"
+    price_en_match = re.search(r'(?:what\s+is\s+(?:the\s+)?)?(?:selling\s+price|sale\s+price|price|rate|cost)\s+of\s+([a-zA-Z0-9_\-\s]+)', c_lower)
+    if price_en_match:
+        cand = price_en_match.group(1).strip().rstrip('?.')
+        cand = re.sub(r'\b(bro|bhai|vantiq|jarvis|please)\b', '', cand).strip()
+        if cand and cand not in ('product', 'catalogue', 'all', 'everything'):
+            return ("product_price", {"product_name": cand})
+
+    # Hindi Devanagari: "<Product> का विक्रय मूल्य / दाम / कीमत"
+    hi_price_match = re.search(r'([\u0900-\u097F\w\s]+?)\s+का\s+(?:विक्रय\s+मूल्य|मूल्य|दाम|कीमत)', c_lower)
+    if hi_price_match:
+        cand = hi_price_match.group(1).strip()
+        if cand:
+            return ("product_price", {"product_name": cand})
+
+    # 11. Supplier Lookup
+    # E.g. "Who is the supplier for Capacitor?", "supplier of Capacitor", "Capacitor ka supplier kaun hai", "list suppliers"
+    if any(phrase in c_lower for phrase in ['list suppliers', 'all suppliers', 'show suppliers', 'suppliers list', 'saare suppliers', 'sabhi suppliers', 'suppliers dikhao']):
+        return ("supplier_lookup", {"list_all": True})
+
+    supp_hinglish_match = re.search(r'([a-zA-Z0-9_\-\s]+?)\s+ka\s+supplier(\s+kaun\s+hai)?', c_lower)
+    if supp_hinglish_match:
+        cand = supp_hinglish_match.group(1).strip()
+        cand = re.sub(r'^(is|iss|is product|mujhe|batao|zara)\s+', '', cand).strip()
+        if cand and cand not in ('all', 'saare', 'sab', 'product'):
+            return ("supplier_lookup", {"product_name": cand})
+
+    supp_en_match = re.search(r'(?:who\s+is\s+(?:the\s+)?)?supplier\s+(?:for|of)\s+([a-zA-Z0-9_\-\s]+)', c_lower)
+    if supp_en_match:
+        cand = supp_en_match.group(1).strip().rstrip('?.')
+        cand = re.sub(r'\b(bro|bhai|vantiq|jarvis|please)\b', '', cand).strip()
+        if cand and cand not in ('product', 'catalogue', 'all'):
+            return ("supplier_lookup", {"product_name": cand})
+
+    # 12. Conceptual / Business Difference Explanations
     # E.g. "Purchase price aur selling price mein kya difference hai?"
     # "Gross margin aur markup mein kya difference hai?"
     if any(term in c_lower for term in ['difference', 'antar', 'farq']) or 'kya difference' in c_lower:
